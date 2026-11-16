@@ -3,6 +3,13 @@ BIN := bin/synk
 # Analysis tools must be built with the same toolchain that compiles the module.
 TOOLCHAIN := $(shell awk '/^toolchain/ {print $$2}' go.mod)
 TOOLRUN := GOTOOLCHAIN=$(TOOLCHAIN) $(GO) run
+# xcodebuild needs the full Xcode. When the calling shell has not chosen one
+# (no DEVELOPER_DIR, xcode-select on Command Line Tools), pick the installed
+# Xcode so the app targets work from a plain shell.
+ifeq ($(origin DEVELOPER_DIR),undefined)
+DEVELOPER_DIR := $(shell ls -d /Applications/Xcode*.app/Contents/Developer 2>/dev/null | head -1)
+endif
+export DEVELOPER_DIR
 
 .PHONY: test race check lint build vet fmt doctor app app-test lint-swift
 
@@ -50,4 +57,27 @@ app-test: build
 lint-swift:
 	swiftlint lint --quiet apps/
 
-.PHONY: lint-swift
+# A distributable signed build. Pass the maintainer's Developer ID
+# Application identity to sign for distribution:
+#
+#   make release SYNK_CODE_SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
+#
+# Without one the bundle is ad-hoc signed: same machinery, verified seals,
+# but it only runs on the machine that built it. The post-build phase signs
+# the bundled engine and re-signs the app, and the seals are verified here —
+# the app would silently break Gatekeeper assessment otherwise.
+SYNK_CODE_SIGN_IDENTITY ?=
+ifeq ($(SYNK_CODE_SIGN_IDENTITY),)
+SIGN_ARGS := CODE_SIGN_IDENTITY=-
+else
+SIGN_ARGS := CODE_SIGN_IDENTITY='$(SYNK_CODE_SIGN_IDENTITY)' CODE_SIGNING_ALLOWED=YES
+endif
+
+release: build
+	xcodegen generate
+	xcodebuild -project Synk.xcodeproj -scheme Synk -configuration Release \
+		-destination 'platform=macOS' -derivedDataPath .build/release build $(SIGN_ARGS)
+	codesign --verify --deep --strict .build/release/Build/Products/Release/Synk.app
+	@echo "Verified: .build/release/Build/Products/Release/Synk.app"
+
+.PHONY: release

@@ -101,6 +101,11 @@ jobs:
       # The app tests drive two real daemons, so the engine is built first.
       - name: Build and test the Mac app
         run: make app-test
+      # Phase 4's done-line: a signed build can be produced from the
+      # repository. CI runs it ad-hoc (no identity available); the seals
+      # are verified by the target itself (decision 0007).
+      - name: Signed release build verifies
+        run: make release
   relay:
     runs-on: ubuntu-latest
     defaults:

@@ -37,16 +37,34 @@ targets:
         # runs it from its own bundle's MacOS folder, named synk-daemon —
         # "synk" would overwrite the app binary itself on the
         # case-insensitive volume (Synk vs synk).
+        #
+        # The copy happens after Xcode has signed the app, so when signing
+        # is enabled the daemon is signed here (hardened runtime; a Go
+        # binary needs no special entitlements) and the app is re-signed to
+        # seal it as nested code. With CODE_SIGNING_ALLOWED=NO (tests) only
+        # the copy happens.
         script: |
           set -euo pipefail
           for candidate in "${SRCROOT}/bin/synk" "${PROJECT_DIR}/bin/synk"; do
             if [ -f "$candidate" ]; then
-              cp "$candidate" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/MacOS/synk-daemon"
-              exit 0
+              DAEMON_SRC="$candidate"
+              break
             fi
           done
-          (cd "${PROJECT_DIR}" && make build)
-          cp "${PROJECT_DIR}/bin/synk" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/MacOS/synk-daemon"
+          if [ -z "${DAEMON_SRC:-}" ]; then
+            (cd "${PROJECT_DIR}" && make build)
+            DAEMON_SRC="${PROJECT_DIR}/bin/synk"
+          fi
+          APP="${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app"
+          cp "$DAEMON_SRC" "$APP/Contents/MacOS/synk-daemon"
+          if [ "${CODE_SIGNING_ALLOWED:-YES}" = "NO" ]; then
+            exit 0
+          fi
+          codesign --force --options runtime \
+            --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" \
+            "$APP/Contents/MacOS/synk-daemon"
+          codesign --force --options runtime --preserve-metadata=entitlements \
+            --sign "${EXPANDED_CODE_SIGN_IDENTITY:--}" "$APP"
         outputFiles: []
         basedOnDependencyAnalysis: false
   SynkTests:

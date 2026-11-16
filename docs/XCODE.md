@@ -24,7 +24,7 @@ The app bundle carries the engine at `Contents/MacOS/synk-daemon` (copied from `
 
 The app talks to `http://127.0.0.1:7421` with the bearer token in the data folder (`~/Library/Application Support/Synk/api-token`). If no daemon is running, the app starts the one it carries with `SYNK_DIR` there; a daemon started by hand is reused.
 
-The build is ad-hoc signed (`CODE_SIGN_IDENTITY: "-"`), so it runs on the machine that built it. A distributable Developer ID build needs the maintainer's Apple Developer account — see STATUS.md, "Needs the Maintainer".
+The build is ad-hoc signed (`CODE_SIGN_IDENTITY: "-"`), so it runs on the machine that built it. The bundled engine is signed and the app re-signed after the copy, so the bundle's seals are valid in every signed configuration (decision 0007).
 
 ## iOS
 
@@ -42,4 +42,20 @@ Export a narrower C API before binding; `internal/engine.Node` is the surface.
 
 ## Signing
 
-Apple File Provider and iOS background tasks need a paid developer account. The sources are written so the first TestFlight can be "pair to a Mac, open Files → Synk, open that folder in Obsidian."
+A distributable build is produced from the repository with:
+
+```bash
+make release SYNK_CODE_SIGN_IDENTITY="Developer ID Application: Name (TEAMID)"
+```
+
+The target builds a Release configuration, signs the bundled engine, re-signs the app, and verifies every seal with `codesign --verify --deep --strict`. Without `SYNK_CODE_SIGN_IDENTITY` the same machinery runs ad-hoc (that is what CI runs), which produces a build that runs only on the machine that made it.
+
+The Developer ID Application certificate is personal to the maintainer's Apple Developer account and is never committed; nothing here needs it to build, test, or verify. For a download others can double-click, the signed app also has to be notarized — a maintainer step, since it needs Apple account credentials:
+
+```bash
+ditto -c -k --sequesterRsrc --keepParent Synk.app Synk.zip
+xcrun notarytool submit Synk.zip --wait          # Apple account credentials
+xcrun stapler staple Synk.app
+```
+
+An unnotarized Developer ID app opens with a right-click → Open on first launch; notarization removes that step.

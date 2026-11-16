@@ -17,6 +17,7 @@ vendor/
 Synk.xcodeproj/
 xcuserdata/
 DerivedData/
+.build/
 *.xcuserstate
 *.hmap
 *.ipa
