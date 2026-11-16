@@ -311,6 +311,18 @@ struct SynkClient {
         throw lastError ?? SynkAPIError(status: 0, message: "the offer lists no address to join")
     }
 
+    /// Pairs with a device discovered via Bonjour, using its device ID.
+    /// This is a convenience wrapper that starts a pairing offer and then
+    /// joins the discovered device.
+    func pairWithDeviceID(_ deviceID: String, address: String) async throws {
+        struct PairOK: Decodable { let ok: Bool }
+        let offer = try await startPair()
+        let _: PairOK = try await post(
+            "pair/join",
+            body: ["addr": address, "code": offer.code, "token": offer.token, "fingerprint": offer.fingerprint]
+        )
+    }
+
     /// Syncs one library with one peer, or with nothing given, everything.
     func sync(addr: String? = nil, folderID: String? = nil) async throws {
         struct SyncOK: Decodable { let ok: Bool }

@@ -94,7 +94,7 @@ struct OnboardingView: View {
         VStack(spacing: 16) {
             Text("Add another device")
                 .font(.title)
-            Text("On the other device, open Synk and scan this code — or type the code below.")
+            Text("On the other device, open Synk and scan this code — or pick a device on your network.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 500)
@@ -120,6 +120,13 @@ struct OnboardingView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+
+            Divider()
+                .padding(.vertical, 4)
+
+            Text("Or discover nearby")
+                .font(.headline)
+            BonjourDiscoveryView()
 
             Spacer()
         }
@@ -304,6 +311,84 @@ struct HeldDeleteSection: View {
         }
         .padding()
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+// MARK: - Bonjour Discovery
+
+/// Discovers Synk services on the local network via mDNS/Bonjour.
+struct BonjourDiscoveryView: View {
+    @EnvironmentObject var model: SynkModel
+    @State private var discovered: [DiscoveredDevice] = []
+    @State private var browsing = false
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if !browsing {
+                Button("Start browsing") {
+                    startBrowsing()
+                }
+                .buttonStyle(.bordered)
+            } else if discovered.isEmpty {
+                HStack {
+                    ProgressView()
+                    Text("Looking for devices...")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                .padding(.vertical, 8)
+            } else {
+                ForEach(discovered) { device in
+                    DiscoveredDeviceView(device: device)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func startBrowsing() {
+        browsing = true
+        discovered = []
+        model.startBonjourDiscovery { devices in
+            discovered = devices
+        }
+    }
+}
+
+struct DiscoveredDevice: Identifiable {
+    let id: String
+    let name: String
+    let deviceID: String
+    let address: String
+}
+
+struct DiscoveredDeviceView: View {
+    let device: DiscoveredDevice
+    @EnvironmentObject var model: SynkModel
+    @State private var pairing = false
+
+    var body: some View {
+        HStack {
+            Image(systemName: "computer")
+                .foregroundStyle(.secondary)
+            Text(device.name)
+                .font(.body)
+            Spacer()
+            if pairing {
+                ProgressView()
+                    .scaleEffect(0.8)
+            } else {
+                Button("Pair") {
+                    pairing = true
+                    Task {
+                        await model.pairWithDevice(device.deviceID, address: device.address)
+                        pairing = false
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 

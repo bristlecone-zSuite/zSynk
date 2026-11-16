@@ -22,7 +22,7 @@ struct SynkApp: App {
 }
 
 @MainActor
-final class SynkModel: ObservableObject {
+final class SynkModel: NSObject, ObservableObject {
     @Published var status: SynkStatus?
     @Published var presets: [Preset] = []
     @Published var discovered: [DiscoveredApp] = []
@@ -203,5 +203,108 @@ final class SynkModel: ObservableObject {
                 self.error = error.localizedDescription
             }
         }
+    }
+
+    // MARK: - Bonjour Discovery
+
+    private var bonjourBrowser: NetServiceBrowser?
+    private var bonjourAdvertiser: NetService?
+    private var bonjourDiscoveryHandler: (([DiscoveredDevice]) -> Void)?
+
+    func startBonjourDiscovery(_ handler: @escaping ([DiscoveredDevice]) -> Void) {
+        bonjourDiscoveryHandler = handler
+
+        guard let client else { return }
+
+        // Advertise this device with its ID and address
+        Task {
+            do {
+                let status = try await client.status()
+                let deviceID = status.deviceId
+                let listenAddr = status.listen ?? "0.0.0.0:0"
+                let port = Int32(listenAddr.split(separator: ":").last ?? "0") ?? 0
+
+                bonjourAdvertiser = NetService(
+                    domain: "local.",
+                    type: "_synk._tcp.",
+                    name: "Synk-\(deviceID)",
+                    port: port)
+                bonjourAdvertiser?.delegate = self
+                bonjourAdvertiser?.publish()
+            } catch {
+                // If we can't get status, advertise with a placeholder
+                bonjourAdvertiser = NetService(domain: "local.", type: "_synk._tcp.", name: "Synk", port: 0)
+                bonjourAdvertiser?.delegate = self
+                bonjourAdvertiser?.publish()
+            }
+        }
+
+        // Browse for other devices
+        bonjourBrowser = NetServiceBrowser()
+        bonjourBrowser?.delegate = self
+        bonjourBrowser?.searchForServices(ofType: "_synk._tcp.", inDomain: "local.")
+    }
+
+    func pairWithDevice(_ deviceID: String, address: String) async {
+        guard let client else { return }
+        do {
+            try await client.pairWithDeviceID(deviceID, address: address)
+            await refresh()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func stopBonjourDiscovery() {
+        bonjourBrowser?.stop()
+        bonjourAdvertiser?.stop()
+        bonjourBrowser = nil
+        bonjourAdvertiser = nil
+    }
+}
+
+// MARK: - NetServiceBrowserDelegate
+
+extension SynkModel: NetServiceBrowserDelegate {
+    func netServiceBrowser(
+        _ browser: NetServiceBrowser,
+        didFind service: NetService,
+        moreComing _: Bool
+    ) {
+        // Resolve the service synchronously
+        _ = service.resolve(withTimeout: 5)
+        guard let addresses = service.addresses,
+              let address = addresses.first?.description else { return }
+        // Use service name as device ID for now (TXT record handling is a follow-up)
+        let deviceID = service.name.components(separatedBy: " ").first ?? "unknown"
+        let name = service.name.hasPrefix("Synk") ? "Synk" : service.name
+        let discovered = DiscoveredDevice(id: service.name, name: name, deviceID: deviceID, address: address)
+        Task { @MainActor in
+            bonjourDiscoveryHandler?([discovered])
+        }
+    }
+
+    func netServiceBrowser(
+        _ browser: NetServiceBrowser,
+        didRemove service: NetService,
+        moreComing _: Bool
+    ) {
+        // Device disappeared
+    }
+
+    func netServiceBrowserDidStopSearch(_ browser: NetServiceBrowser) {
+        // Search stopped
+    }
+}
+
+// MARK: - NetServiceDelegate
+
+extension SynkModel: NetServiceDelegate {
+    func netServiceDidPublish(_ service: NetService) {
+        // Service is now advertising
+    }
+
+    func netService(_ service: NetService, didNotPublish _: [String: Any]) {
+        // Failed to advertise
     }
 }
