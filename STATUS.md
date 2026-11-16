@@ -1,8 +1,8 @@
 # Status
 
 - **Current phase:** Phase 4, the Mac app (see [ROADMAP.md](ROADMAP.md)).
-- **Last done:** the app builds and its integration tests pass: `SynkClient` rewritten for the current API (token auth, all endpoints, event stream, `synk://pair` parsing); `Daemon.swift` starts and follows the bundled engine; `project.yml` + XcodeGen with the engine bundled as `synk-daemon` (decision 0006); Swift tests drive two real daemons end to end (pair → sync both ways → version kept on overwrite → restore, pause/resume, events); `make app` / `make app-test`; CI gained an `app (macos)` job.
-- **Next step:** implement the 3-step onboarding wizard (device name → app picker via iCloud move flow → QR pairing), wire the login item toggle in the sidebar, and build the conflict center with restore and held deletes.
+- **Last done:** CI fixed: `app (macos)` job now installs `xcodegen` (was missing, causing build failure). All build/test jobs green (`relay`, `go (linux)`, `go (macos)`, `app (macos)`).
+- **Next step:** implement Bonjour discovery for device pairing and the iCloud "move" flow in the app picker; then the signed-build story.
 - **Blocked on:** nothing (a Developer ID signing identity stays a maintainer step; recorded in STATUS.md below).
 
 ## Needs the Maintainer
