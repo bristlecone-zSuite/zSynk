@@ -107,8 +107,10 @@ jobs:
       - name: Signed release build verifies
         run: make release
       # Phase 5: the iOS app embeds the engine through the gomobile
-      # framework (decision 0009); the target regenerates the framework
-      # and builds the app for the simulator.
+      # framework (decision 0009). Two steps so a bind failure and a
+      # build failure are distinguishable from the outside.
+      - name: Generate the iOS framework
+        run: make ios-framework
       - name: Build the iOS app for the simulator
         run: make ios-build
   relay:

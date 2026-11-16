@@ -94,9 +94,10 @@ ios-framework:
 		-o apps/ios/Frameworks/SynkCore.xcframework \
 		github.com/bristlecone-zSuite/zSynk/mobile
 
-# The iOS app: generate the project and build it for the simulator. The
-# framework is regenerated first so the app always links fresh bindings.
-ios-build: ios-framework
+# The iOS app: generate the project and build it for the simulator. Run
+# make ios-framework first (CI does, as its own step so a bind failure
+# shows on its own); this target does not regenerate the framework.
+ios-build:
 	xcodegen generate
 	xcodebuild -project Synk.xcodeproj -scheme Synk-iOS \
 		-destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
