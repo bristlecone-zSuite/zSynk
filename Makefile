@@ -20,7 +20,9 @@ fmt:
 
 lint:
 	test -z "$$(gofmt -l .)"
-	$(TOOLRUN) honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...
+	# v0.8.1 can't read Go 1.27.2 export data; this is the same master commit
+	# test.yml pins. Move both back to a release once one includes the fix.
+	$(TOOLRUN) honnef.co/go/tools/cmd/staticcheck@v0.7.0-0.dev.0.20261009230814-452d5bb86b45 ./...
 	$(TOOLRUN) golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 check: vet race lint
