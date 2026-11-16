@@ -27,7 +27,8 @@ type Store struct {
 
 // New opens the store at root. Content still on its way into the store
 // when a process last stopped is discarded, so only one Store may use a
-// root at a time.
+// root at a time. What interrupted transfers staged under partial/ is
+// kept, for the next transfer to continue.
 func New(root string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(root, "objects"), 0o700); err != nil {
 		return nil, err
@@ -37,6 +38,9 @@ func New(root string) (*Store, error) {
 		return nil, err
 	}
 	if err := os.Mkdir(s.tmpDir(), 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(s.partialDir(), 0o700); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -230,9 +234,31 @@ func (s *Store) PutFile(path string) (string, int64, error) {
 	return s.PutReader(f)
 }
 
+// DiscardPartial throws away what a transfer staged for hash, unless
+// another transfer is still appending to it.
+func (s *Store) DiscardPartial(hash string) error {
+	p, err := s.partialPath(hash)
+	if err != nil {
+		return err
+	}
+	if f, err := os.OpenFile(p, os.O_RDWR, 0o600); err == nil {
+		locked := lockExclusive(f) == nil
+		_ = unlockExclusive(f)
+		_ = f.Close()
+		if !locked {
+			return nil // a transfer is still working on it
+		}
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // Sweep removes the blobs keep rejects, and what interrupted writes left
-// beside them, if they were written before cutoff. It returns how many
-// files it removed and their size.
+// beside them, if they were written before cutoff. It also removes
+// staged partials old enough that no transfer is still working on. It
+// returns how many files it removed and their size.
 func (s *Store) Sweep(keep func(hash string) bool, cutoff time.Time) (removed int, freed int64, err error) {
 	err = filepath.WalkDir(filepath.Join(s.Root, "objects"), func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -257,7 +283,11 @@ func (s *Store) Sweep(keep func(hash string) bool, cutoff time.Time) (removed in
 		freed += info.Size()
 		return nil
 	})
-	return removed, freed, err
+	if err != nil {
+		return removed, freed, err
+	}
+	premoved, pfreed, perr := s.sweepPartials(cutoff)
+	return removed + premoved, freed + pfreed, perr
 }
 
 // Remove deletes a blob, if it's stored.

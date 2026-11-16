@@ -396,10 +396,12 @@ func (n *Node) exportIndex(id string) (*reconcile.Index, uint64, error) {
 	return cp, n.gens[id], nil
 }
 
-// Wants lists the content this node lacks to match remote, given local, its
-// index as sent to the peer. Until release is called, the store keeps all
-// the content those changes need.
-func (n *Node) Wants(local, remote *reconcile.Index) (hashes []string, release func()) {
+// Wants lists the content this node lacks to match remote, given local,
+// its index as sent to the peer. Each entry says how many bytes of the
+// blob this node already holds staged from a transfer that stopped part
+// way, so the peer sends only what's missing. Until release is called,
+// the store keeps all the content those changes need.
+func (n *Node) Wants(local, remote *reconcile.Index) ([]wantEntry, func()) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	var ops []reconcile.Op
@@ -410,7 +412,20 @@ func (n *Node) Wants(local, remote *reconcile.Index) (hashes []string, release f
 	for _, h := range needed {
 		n.pins[h]++
 	}
-	return n.missingBlobs(needed, remote), func() {
+	offered := referenced(remote)
+	var wants []wantEntry
+	for _, h := range needed {
+		limit, ok := offered[h]
+		if !ok || n.Store.Has(h) {
+			continue
+		}
+		off := n.Store.PartialSize(h)
+		if off >= limit {
+			off = 0
+		}
+		wants = append(wants, wantEntry{Hash: h, Offset: off})
+	}
+	return wants, func() {
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		for _, h := range needed {

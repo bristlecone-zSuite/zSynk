@@ -56,7 +56,7 @@ func TestPeerBlobHashCannotBeAPath(t *testing.T) {
 	// The second case can't happen through MissingBlobs, which only sees
 	// validated hashes; it checks recvBlobs doesn't depend on that.
 	for _, wanted := range [][]string{{requested}, {evil}} {
-		err := recvFrom(n, wanted, reconcile.NewIndex("notes", "PEER"), func(w io.Writer) error {
+		err := recvFrom(n, wantFor(wanted...), reconcile.NewIndex("notes", "PEER"), func(w io.Writer) error {
 			return writeBlob(w, evil, []byte("attacker bytes"))
 		})
 		if err == nil {
@@ -86,7 +86,7 @@ func TestRecvBlobsRejectsUnrequestedContent(t *testing.T) {
 	n := openNode(t, "A")
 	wanted := []byte("wanted")
 	extra := []byte("pushed without being asked")
-	err := recvFrom(n, []string{atomicfile.HashBytes(wanted)}, reconcile.NewIndex("notes", "PEER"), func(w io.Writer) error {
+	err := recvFrom(n, wantFor(atomicfile.HashBytes(wanted)), reconcile.NewIndex("notes", "PEER"), func(w io.Writer) error {
 		return writeBlob(w, atomicfile.HashBytes(extra), extra)
 	})
 	if err == nil {
@@ -117,12 +117,12 @@ func TestRecvBlobsChecksWhatArrives(t *testing.T) {
 	add("huge.mov", reconcile.Entry{Kind: reconcile.KindFile, Hash: huge, Size: 1 << 60})
 	recv := func(h string, content []byte) error {
 		t.Helper()
-		return recvFrom(n, []string{h}, remote, func(w io.Writer) error { return writeBlob(w, h, content) })
+		return recvFrom(n, wantFor(h), remote, func(w io.Writer) error { return writeBlob(w, h, content) })
 	}
 	// head sends only a blob's message, claiming size.
 	head := func(h string, size int64) error {
 		t.Helper()
-		return recvFrom(n, []string{h}, remote, func(w io.Writer) error {
+		return recvFrom(n, wantFor(h), remote, func(w io.Writer) error {
 			return transport.WriteMsg(w, transport.Msg{Kind: transport.KindBlob, Hash: h, Size: size})
 		})
 	}
@@ -164,16 +164,25 @@ func TestRecvBlobsChecksWhatArrives(t *testing.T) {
 	}
 }
 
-// recvFrom runs n.recvBlobs for hashes from remote on the content send
+// recvFrom runs n.recvBlobs for wants from remote on the content send
 // writes.
-func recvFrom(n *Node, hashes []string, remote *reconcile.Index, send func(w io.Writer) error) error {
+func recvFrom(n *Node, wants []wantEntry, remote *reconcile.Index, send func(w io.Writer) error) error {
 	client, server := net.Pipe()
 	go func() {
 		_ = send(client)
 		_ = client.Close()
 	}()
 	defer server.Close()
-	return n.recvBlobs(server, hashes, remote)
+	return n.recvBlobs(server, wants, remote)
+}
+
+// wantFor turns hash names into the want entries recvBlobs reads.
+func wantFor(hashes ...string) []wantEntry {
+	wants := make([]wantEntry, len(hashes))
+	for i, h := range hashes {
+		wants[i] = wantEntry{Hash: h}
+	}
+	return wants
 }
 
 func writeBlob(w io.Writer, hash string, content []byte) error {
@@ -204,8 +213,8 @@ func TestServeWantsOnlyServesTheSentLibrary(t *testing.T) {
 			_ = server.Close()
 		}()
 		_ = client.SetDeadline(time.Now().Add(5 * time.Second))
-		must(t, writeWant(client, hashes))
-		_, _, content, readErr := transport.ReadBlob(client)
+		must(t, writeWant(client, wantFor(hashes...)))
+		_, _, _, content, readErr := transport.ReadBlob(client)
 		if readErr == nil {
 			_, _ = io.Copy(io.Discard, content)
 		}
@@ -267,7 +276,7 @@ func TestCheckRemote(t *testing.T) {
 	}
 }
 
-func must(t *testing.T, err error) {
+func must(t testing.TB, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)

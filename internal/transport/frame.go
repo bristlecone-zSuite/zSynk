@@ -49,7 +49,11 @@ type Msg struct {
 	Hash  string `json:"hash,omitempty"`
 	// Size is the length of the body that follows the message: a blob's
 	// content, an index, or a want list.
-	Size       int64  `json:"size,omitempty"`
+	Size int64 `json:"size,omitempty"`
+	// Offset is where a blob's content starts: the receiver asked to
+	// continue a transfer that stopped part way, and holds the first
+	// offset bytes itself.
+	Offset     int64  `json:"offset,omitempty"`
 	ListenPort string `json:"listenPort,omitempty"`
 }
 
@@ -83,13 +87,24 @@ func ReadMsgLimit(r io.Reader, limit uint32) (Msg, error) {
 // bytes. It fails if r holds more or less, or fails at its end, as
 // blob.Verify does for content that doesn't match its hash.
 func WriteBlob(w io.Writer, hash string, size int64, r io.Reader) error {
-	if size < 0 {
+	return WriteBlobFrom(w, hash, 0, size, r)
+}
+
+// WriteBlobFrom sends the remaining bytes r holds as the rest of hash's
+// content, from offset on: the receiver holds the first offset bytes and
+// asked to continue from there. The message carries the offset, and its
+// size is the length of the body that follows, the remaining bytes.
+func WriteBlobFrom(w io.Writer, hash string, offset, remaining int64, r io.Reader) error {
+	if offset < 0 {
+		return fmt.Errorf("transport: blob %s has a negative offset", hash)
+	}
+	if remaining < 0 {
 		return fmt.Errorf("transport: blob %s has a negative size", hash)
 	}
-	if err := WriteMsg(w, Msg{Kind: KindBlob, Hash: hash, Size: size}); err != nil {
+	if err := WriteMsg(w, Msg{Kind: KindBlob, Hash: hash, Size: remaining, Offset: offset}); err != nil {
 		return err
 	}
-	if err := writeChunks(w, r, size); err != nil {
+	if err := writeChunks(w, r, remaining); err != nil {
 		return fmt.Errorf("transport: blob %s: %w", hash, err)
 	}
 	var more [1]byte
@@ -97,7 +112,7 @@ func WriteBlob(w io.Writer, hash string, size int64, r io.Reader) error {
 	case io.EOF:
 		return nil
 	case nil:
-		return fmt.Errorf("transport: blob %s holds more than %d bytes", hash, size)
+		return fmt.Errorf("transport: blob %s holds more than %d bytes", hash, remaining)
 	default:
 		return fmt.Errorf("transport: blob %s: %w", hash, err)
 	}
@@ -106,15 +121,18 @@ func WriteBlob(w io.Writer, hash string, size int64, r io.Reader) error {
 // ReadBlob reads a blob message and returns a reader for the content
 // that follows it, which ends after size bytes. Read the content to its
 // end before reading anything else from r.
-func ReadBlob(r io.Reader) (hash string, size int64, content io.Reader, err error) {
+func ReadBlob(r io.Reader) (hash string, size int64, offset int64, content io.Reader, err error) {
 	m, body, err := ReadBody(r, math.MaxInt64)
 	if err != nil {
-		return "", 0, nil, err
+		return "", 0, 0, nil, err
 	}
 	if m.Kind != KindBlob {
-		return "", 0, nil, fmt.Errorf("transport: expected blob, got %.40q", m.Kind)
+		return "", 0, 0, nil, fmt.Errorf("transport: expected blob, got %.40q", m.Kind)
 	}
-	return m.Hash, m.Size, body, nil
+	if m.Offset < 0 {
+		return "", 0, 0, nil, fmt.Errorf("transport: blob %s has a negative offset", m.Hash)
+	}
+	return m.Hash, m.Size, m.Offset, body, nil
 }
 
 // WriteBody sends m and then body, which can be longer than a frame: m

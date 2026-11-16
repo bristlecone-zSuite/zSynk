@@ -34,6 +34,7 @@ A device's ID, such as `QQKX-AHEH-BZYC-WDA9`, is the first 80 bits of the SHA-25
 | `proof` | `pair-join`, `pair-ok` | The pairing proof |
 | `hash` | `blob` | The blob's SHA-256, as 64 lowercase hex digits |
 | `size` | `index`, `want`, `blob` | The length of the body that follows |
+| `offset` | `blob` | How many bytes of the blob the receiver already holds, so the body starts there. Absent when the transfer starts from the first byte |
 | `error` | `error` | Why the sender stopped. It's shown to the user, cleaned to one line of at most 200 printable characters |
 
 | Kind | Body | Sent |
@@ -43,8 +44,8 @@ A device's ID, such as `QQKX-AHEH-BZYC-WDA9`, is the first 80 bits of the SHA-25
 | `hello` | none | First message of a sync |
 | `hello-ok` | none | The library is shared with the device that dialed |
 | `index` | The sender's index, as JSON | Once by each device |
-| `want` | A JSON array of blob hashes | Once by each device |
-| `blob` | The blob's content | Once for each hash asked for |
+| `want` | A JSON array of `{hash, offset}` objects: one blob per object, with `offset` saying how many bytes of it the asking device already holds | Once by each device |
+| `blob` | The blob's content, from the asked offset on | Once for each hash asked for |
 | `done` | none | The answering device applied the changes |
 | `error` | none | Instead of any reply. The connection then closes |
 
@@ -101,8 +102,8 @@ Wants and blobs follow these rules. A device that breaks one ends the session.
 
 - A device asks only for blobs it lacks and needs in order to apply the other device's changes: a file's content, or a package's manifest and parts.
 - A device sends only blobs referenced by the index it sent, each at most once. A want list may be no longer than the number of distinct blobs that index references.
-- A blob may be no larger than the sender's index allows: a file's size, a package's size for each of its parts, and 64 MiB for a manifest. The receiver also keeps 64 MiB of disk free.
-- The receiver checks each blob's SHA-256 as it arrives, and discards one that doesn't match.
+- A blob may be no larger than the sender's index allows: a file's size, a package's size for each of its parts, and 64 MiB for a manifest. A `want` with an offset asks for the bytes from that offset on, so the message's `size` and the body together cover at most what the index allows. The receiver also keeps 64 MiB of disk free.
+- A device that asks with an offset holds those bytes itself, staged from a transfer that stopped part way. The receiver checks the whole blob's SHA-256, staged bytes and arriving bytes together, before it stores anything, and discards the staged content if it doesn't match. Staged content lives only in the receiver's own store, and is removed by garbage collection after the same grace period as unreferenced content.
 
 ## Indexes
 

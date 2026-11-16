@@ -134,12 +134,12 @@ func TestCorruptBlobQuarantined(t *testing.T) {
 	}
 }
 
-func openNode(t *testing.T, name string) *Node {
+func openNode(t testing.TB, name string) *Node {
 	t.Helper()
 	return openNodeAt(t, t.TempDir(), name)
 }
 
-func openNodeAt(t *testing.T, dir, name string) *Node {
+func openNodeAt(t testing.TB, dir, name string) *Node {
 	t.Helper()
 	n, err := Open(dir, name)
 	if err != nil {

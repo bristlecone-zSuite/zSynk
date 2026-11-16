@@ -391,14 +391,14 @@ func removeNotes(t *testing.T, dir string, from, to int) {
 	}
 }
 
-func writeFile(t *testing.T, dir, rel, content string) {
+func writeFile(t testing.TB, dir, rel, content string) {
 	t.Helper()
 	p := filepath.Join(dir, filepath.FromSlash(rel))
 	must(t, os.MkdirAll(filepath.Dir(p), 0o700))
 	must(t, os.WriteFile(p, []byte(content), 0o600))
 }
 
-func wantFile(t *testing.T, dir, rel, content string) {
+func wantFile(t testing.TB, dir, rel, content string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
 	if err != nil || string(got) != content {

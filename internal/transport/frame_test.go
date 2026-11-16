@@ -34,7 +34,7 @@ func TestBlobsAreChunked(t *testing.T) {
 			t.Fatal(err)
 		}
 		stream := bytes.NewReader(buf.Bytes())
-		h, n, r, err := ReadBlob(stream)
+		h, n, _, r, err := ReadBlob(stream)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -178,7 +178,7 @@ func TestReadBlobRejectsBadFrames(t *testing.T) {
 		"a stream that ends inside a blob":  blob(6, []byte("abc")),
 		"a stream that ends inside a frame": whole[:len(whole)-1],
 	} {
-		_, size, r, err := ReadBlob(bytes.NewReader(stream))
+		_, size, _, r, err := ReadBlob(bytes.NewReader(stream))
 		var got []byte
 		if err == nil {
 			got, err = io.ReadAll(r)
@@ -187,14 +187,14 @@ func TestReadBlobRejectsBadFrames(t *testing.T) {
 			t.Errorf("%s: read %d bytes of a %d-byte blob, %v", name, len(got), size, err)
 		}
 	}
-	if _, _, _, err := ReadBlob(bytes.NewReader(blob(-1))); err == nil {
+	if _, _, _, _, err := ReadBlob(bytes.NewReader(blob(-1))); err == nil {
 		t.Error("a blob with a negative size was read")
 	}
 	var other bytes.Buffer
 	if err := WriteMsg(&other, Msg{Kind: KindError, Error: "no"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := ReadBlob(&other); err == nil {
+	if _, _, _, _, err := ReadBlob(&other); err == nil {
 		t.Error("a message that isn't a blob was read as one")
 	}
 }

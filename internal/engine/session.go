@@ -203,9 +203,17 @@ func encodeBody(kind transport.Kind, v any) ([]byte, error) {
 	return raw, nil
 }
 
-// writeWant asks for the blobs hashes names.
-func writeWant(w io.Writer, hashes []string) error {
-	raw, err := encodeBody(transport.KindWant, hashes)
+// wantEntry is one blob a device asks another for: its hash, and how
+// many bytes of it the asking device already holds staged from a
+// transfer that stopped part way. An offset of 0 asks for it all.
+type wantEntry struct {
+	Hash   string `json:"hash"`
+	Offset int64  `json:"offset,omitempty"`
+}
+
+// writeWant asks for the blobs wants name.
+func writeWant(w io.Writer, wants []wantEntry) error {
+	raw, err := encodeBody(transport.KindWant, wants)
 	if err != nil {
 		return err
 	}
@@ -299,12 +307,12 @@ func (n *Node) handleHello(c net.Conn, p config.Peer, msg transport.Msg) (err er
 	if err := n.serveWants(c, local); err != nil {
 		return err
 	}
-	hashes, release := n.Wants(local, remote)
+	wants, release := n.Wants(local, remote)
 	defer release()
-	if err := writeWant(c, hashes); err != nil {
+	if err := writeWant(c, wants); err != nil {
 		return err
 	}
-	if err := n.recvBlobs(c, hashes, remote); err != nil {
+	if err := n.recvBlobs(c, wants, remote); err != nil {
 		return err
 	}
 	// The other device applies what it received meanwhile, then waits to
@@ -317,9 +325,10 @@ func (n *Node) handleHello(c net.Conn, p config.Peer, msg transport.Msg) (err er
 }
 
 // serveWants sends the content the peer asks for, but only content that the
-// index we sent it references. The store holds every library's blobs.
+// index we sent it references, and only from the offset it asked for. The
+// store holds every library's blobs.
 func (n *Node) serveWants(c io.ReadWriter, sent *reconcile.Index) error {
-	var want []string
+	var want []wantEntry
 	if err := readBody(c, transport.KindWant, &want); err != nil {
 		return err
 	}
@@ -328,31 +337,65 @@ func (n *Node) serveWants(c io.ReadWriter, sent *reconcile.Index) error {
 		return fmt.Errorf("engine: peer asked for %d blobs, the index references %d", len(want), len(allowed))
 	}
 	served := make(map[string]bool, len(want))
-	for _, h := range want {
-		if _, ok := allowed[h]; !ok || served[h] {
+	for _, e := range want {
+		if _, ok := allowed[e.Hash]; !ok || served[e.Hash] {
 			return fmt.Errorf("engine: peer asked for content outside library %s", sent.FolderID)
 		}
-		served[h] = true
-		if err := n.sendBlob(c, h); err != nil {
+		if e.Offset < 0 {
+			return fmt.Errorf("engine: peer asked for %s from %d bytes in", e.Hash, e.Offset)
+		}
+		served[e.Hash] = true
+		if err := n.sendBlobAt(c, e.Hash, e.Offset); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// sendBlob sends a blob from the store. A blob found to be corrupt is
+// sendBlobAt sends a blob from the store, from off bytes in if the peer
+// holds the first off bytes staged. A blob found to be corrupt is
 // removed, so the next scan stores the file's content again.
-func (n *Node) sendBlob(w io.Writer, hash string) error {
+func (n *Node) sendBlobAt(w io.Writer, hash string, off int64) error {
 	src, size, err := n.Store.Open(hash)
 	if err != nil {
 		return err
 	}
-	err = transport.WriteBlob(w, hash, size, src)
+	err = sendBlobFrom(w, src, hash, size, off)
 	_ = src.Close()
 	if errors.Is(err, blob.ErrCorrupt) {
 		_ = n.Store.Remove(hash)
 	}
 	return err
+}
+
+// sendBlobFrom sends size-off bytes of src, which holds the blob's whole
+// content, and checks that all of it hashes to hash.
+func sendBlobFrom(w io.Writer, src io.Reader, hash string, size, off int64) error {
+	if off < 0 || off > size {
+		off = 0
+	}
+	// Reading the staged prefix through src keeps the store's own
+	// verification of the whole content, even though those bytes aren't
+	// sent.
+	if _, err := io.Copy(io.Discard, io.LimitReader(src, off)); err != nil {
+		return err
+	}
+	err := transport.WriteBlobFrom(w, hash, off, size-off, io.LimitReader(src, size-off))
+	// One more read reaches src's end, where its verifier has checked
+	// every byte the blob holds.
+	var more [1]byte
+	_, rerr := src.Read(more[:])
+	switch {
+	case errors.Is(rerr, io.EOF):
+		return err
+	case rerr == nil:
+		return fmt.Errorf("engine: blob %s holds more than %d bytes", hash, size)
+	default:
+		if err == nil {
+			err = rerr
+		}
+		return err
+	}
 }
 
 // referenced returns the blobs idx references, each with the most bytes
@@ -381,17 +424,18 @@ func referenced(idx *reconcile.Index) map[string]int64 {
 	return out
 }
 
-// recvBlobs reads one blob for each of hashes. A blob is stored only if
+// recvBlobs reads one blob for each of wants. A blob is stored only if
 // it's one we asked for, it's no bigger than remote allows, there's room
-// for it, and its content matches its hash.
-func (n *Node) recvBlobs(r io.Reader, hashes []string, remote *reconcile.Index) error {
+// for it, and the whole of it matches its hash. What a transfer that
+// stops part way delivered stays staged for the next one to continue.
+func (n *Node) recvBlobs(r io.Reader, wants []wantEntry, remote *reconcile.Index) error {
 	limits := referenced(remote)
-	pending := make(map[string]bool, len(hashes))
-	for _, h := range hashes {
-		pending[h] = true
+	pending := make(map[string]bool, len(wants))
+	for _, e := range wants {
+		pending[e.Hash] = true
 	}
-	for range hashes {
-		hash, size, content, err := transport.ReadBlob(r)
+	for range wants {
+		hash, size, off, content, err := transport.ReadBlob(r)
 		if err != nil {
 			return err
 		}
@@ -399,17 +443,66 @@ func (n *Node) recvBlobs(r io.Reader, hashes []string, remote *reconcile.Index) 
 			return fmt.Errorf("engine: peer sent a blob that wasn't requested")
 		}
 		delete(pending, hash)
-		if limit := limits[hash]; size > limit {
-			return fmt.Errorf("engine: peer sent %d bytes for %s, which its index allows %d", size, hash, limit)
+		if limit := limits[hash]; off+size > limit {
+			return fmt.Errorf("engine: peer sent %d bytes from %d in for %s, which its index allows %d", size, off, hash, limit)
 		}
-		if err := n.roomFor(size); err != nil {
+		if err := n.roomFor(off + size); err != nil {
 			return err
 		}
-		if _, _, err := n.Store.PutReader(blob.Verify(content, hash, size)); err != nil {
+		if err := n.recvBlob(hash, size, off, content); err != nil {
 			return fmt.Errorf("engine: receiving %s: %w", hash, err)
 		}
 	}
 	return nil
+}
+
+// recvBlob reads one blob's remaining bytes and stores it once the whole
+// of it, the staged prefix included, hashes to hash.
+func (n *Node) recvBlob(hash string, size, off int64, content io.Reader) error {
+	if off > 0 && off != n.Store.PartialSize(hash) {
+		// The staged content isn't the prefix we asked to continue;
+		// leave the arriving bytes unstored, so the next sync asks again.
+		p, err := n.Store.Resume(hash)
+		if err == nil {
+			_ = p.Discard()
+		}
+		_, err = io.CopyN(io.Discard, content, size)
+		return err
+	}
+	p, err := n.Store.Resume(hash)
+	if err != nil {
+		if errors.Is(err, blob.ErrBusy) {
+			// Another transfer is staging this content; leave what
+			// arrives unstored, so the next sync asks for it again.
+			_, err = io.CopyN(io.Discard, content, size)
+			return err
+		}
+		return err
+	}
+	defer p.Close()
+	if off == 0 && p.Size() > 0 {
+		// What an earlier transfer staged isn't a prefix this transfer
+		// continues; it starts over.
+		if err := p.Discard(); err != nil {
+			return err
+		}
+		if p, err = n.Store.Resume(hash); err != nil {
+			return err
+		}
+		defer p.Close()
+	}
+	if _, err := io.CopyN(p, content, size); err != nil {
+		// What arrived stays staged, for the next transfer to continue.
+		return err
+	}
+	// The body ended; nothing more may belong to this blob.
+	var more [1]byte
+	if _, rerr := content.Read(more[:]); rerr == nil {
+		return fmt.Errorf("engine: peer sent more than %d bytes for %s", size, hash)
+	} else if !errors.Is(rerr, io.EOF) {
+		return rerr
+	}
+	return p.Finish()
 }
 
 var diskAvailable = atomicfile.DiskAvailable
@@ -558,12 +651,12 @@ func (n *Node) hello(c net.Conn, p config.Peer, addr, folderID string) (err erro
 		return err
 	}
 
-	hashes, release := n.Wants(local, remote)
+	wants, release := n.Wants(local, remote)
 	defer release()
-	if err := writeWant(c, hashes); err != nil {
+	if err := writeWant(c, wants); err != nil {
 		return err
 	}
-	if err := n.recvBlobs(c, hashes, remote); err != nil {
+	if err := n.recvBlobs(c, wants, remote); err != nil {
 		return err
 	}
 	if err := n.serveWants(c, local); err != nil {

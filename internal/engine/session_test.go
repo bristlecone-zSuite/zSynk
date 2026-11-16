@@ -850,7 +850,7 @@ func TestOneHostGetsFewConnections(t *testing.T) {
 }
 
 // listen serves n's peer protocol on a loopback port until the test ends.
-func listen(t *testing.T, n *Node) string {
+func listen(t testing.TB, n *Node) string {
 	t.Helper()
 	ln, err := n.ServePeers("127.0.0.1:0")
 	must(t, err)
@@ -875,7 +875,7 @@ func joinOffer(t *testing.T, n *Node, addr string, sess *pairing.Session, finger
 
 // library enables a library on n, shared with the devices in share, or
 // with every paired device, and returns its folder.
-func library(t *testing.T, n *Node, id string, share ...string) string {
+func library(t testing.TB, n *Node, id string, share ...string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), id)
 	must(t, n.EnableLibrary(config.Library{ID: id, Preset: "custom", Path: dir, ShareWith: share}))
