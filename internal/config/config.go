@@ -122,3 +122,27 @@ func (f *File) UpsertLibrary(l Library) {
 	}
 	f.Libraries = append(f.Libraries, l)
 }
+
+// RemoveLibrary forgets the library with the ID, and says whether there
+// was one.
+func (f *File) RemoveLibrary(id string) bool {
+	for i := range f.Libraries {
+		if f.Libraries[i].ID == id {
+			f.Libraries = append(f.Libraries[:i], f.Libraries[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// RemovePeer forgets the device with the ID, and says whether there was
+// one.
+func (f *File) RemovePeer(id string) bool {
+	for i := range f.Peers {
+		if f.Peers[i].DeviceID == id {
+			f.Peers = append(f.Peers[:i], f.Peers[i+1:]...)
+			return true
+		}
+	}
+	return false
+}

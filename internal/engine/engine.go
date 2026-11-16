@@ -81,6 +81,9 @@ type Node struct {
 	folds     map[string]bool
 	foldsMu   sync.Mutex
 	FoldProbe func(dir string) bool
+	// subs are the event streams apps watch; eventsMu guards them.
+	eventsMu sync.Mutex
+	subs     map[chan<- Event]bool
 }
 
 // ErrInUse means another Node, usually `synk serve` in another process,
@@ -339,9 +342,11 @@ func (n *Node) scanLocked(id string) (res *scan.Result, err error) {
 	}
 	if len(held) > 0 && !sameSet(held, n.held[id]) {
 		n.Log.Warn("holding deletes until they're confirmed", "library", id, "count", len(held))
+		n.publish("deletes", id, "", "warning", fmt.Sprint(len(held))+" deletes are held until you confirm or restore them")
 	}
 	if last := n.scans[id]; len(res.Errors) > 0 && (last == nil || !slices.Equal(res.Errors, last.Errors)) {
 		n.Log.Warn("couldn't read some files", "library", id, "count", len(res.Errors), "first", res.Errors[0])
+		n.publish("scan", id, "", "warning", "can't read "+fmt.Sprint(len(res.Errors))+" files; the first is "+res.Errors[0])
 	}
 	next.FolderID = id
 	n.indexes[id] = next

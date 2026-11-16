@@ -62,6 +62,14 @@ func main() {
 		err = cmdHeldDeletes("confirm-deletes", args)
 	case "restore-deletes":
 		err = cmdHeldDeletes("restore-deletes", args)
+	case "pause":
+		err = cmdPause(args)
+	case "resume":
+		err = cmdResume(args)
+	case "remove":
+		err = cmdRemove(args)
+	case "unpair":
+		err = cmdUnpair(args)
 	case "versions":
 		err = cmdVersions(args)
 	case "restore":
@@ -96,11 +104,17 @@ Usage:
   synk log [-n LINES]
   synk confirm-deletes --library ID
   synk restore-deletes --library ID
+  synk pause --library ID
+  synk resume --library ID
+  synk remove --library ID
+  synk unpair --device ID
   synk versions --library ID [--path PATH]
   synk restore --library ID --path PATH [--version VERSION]
 
 Before a sync replaces or deletes a file, Synk keeps a copy: synk versions
-lists them, and synk restore puts one back.
+lists them, and synk restore puts one back. synk pause stops a library
+syncing until synk resume; synk remove stops syncing it and keeps its
+files, its versions, and its index; synk unpair forgets a paired device.
 
 While synk serve is running, the other commands go through its local API.
 What Synk changes and what goes wrong is logged to synk.log in the data
@@ -617,6 +631,100 @@ func heldIn(st engine.Status, id string) []string {
 		}
 	}
 	return nil
+}
+
+// withLibrary runs f with the ID the --library flag names, through the
+// daemon when one is running.
+func withLibrary(name string, args []string, f func(t *target, id string) error) error {
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	id := fs.String("library", "", "library id")
+	_ = fs.Parse(args)
+	if *id == "" {
+		return fmt.Errorf("%s: --library is required", name)
+	}
+	t, err := connect("")
+	if err != nil {
+		return err
+	}
+	defer t.close()
+	return f(t, *id)
+}
+
+func cmdPause(args []string) error {
+	return withLibrary("pause", args, func(t *target, id string) error {
+		if t.daemon != nil {
+			if _, err := t.daemon.PauseLibrary(id); err != nil {
+				return err
+			}
+		} else if err := t.node.PauseLibrary(id); err != nil {
+			return err
+		}
+		fmt.Printf("Paused %s. Nothing syncs until synk resume --library %s.\n", id, id)
+		return nil
+	})
+}
+
+func cmdResume(args []string) error {
+	return withLibrary("resume", args, func(t *target, id string) error {
+		if t.daemon != nil {
+			if _, err := t.daemon.ResumeLibrary(id); err != nil {
+				return err
+			}
+		} else if err := t.node.ResumeLibrary(id); err != nil {
+			return err
+		}
+		fmt.Printf("Resumed %s. What changed while it was paused syncs now.\n", id)
+		return nil
+	})
+}
+
+// cmdRemove forgets a library. Synk keeps the files, the versions in the
+// vault, and the index, and says so.
+func cmdRemove(args []string) error {
+	return withLibrary("remove", args, func(t *target, id string) error {
+		if t.daemon != nil {
+			if err := t.daemon.RemoveLibrary(id); err != nil {
+				return err
+			}
+		} else if err := t.node.RemoveLibrary(id); err != nil {
+			return err
+		}
+		fmt.Printf("Removed %s. Synk keeps its files, its versions, and its index;\n", id)
+		fmt.Println("enabling the folder again picks up where it left off.")
+		return nil
+	})
+}
+
+// withDevice runs f with the ID the --device flag names.
+func withDevice(name string, args []string, f func(t *target, id string) error) error {
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	id := fs.String("device", "", "device id")
+	_ = fs.Parse(args)
+	if *id == "" {
+		return fmt.Errorf("%s: --device is required", name)
+	}
+	t, err := connect("")
+	if err != nil {
+		return err
+	}
+	defer t.close()
+	return f(t, *id)
+}
+
+// cmdUnpair forgets a paired device. Synk keeps every file.
+func cmdUnpair(args []string) error {
+	return withDevice("unpair", args, func(t *target, id string) error {
+		if t.daemon != nil {
+			if err := t.daemon.Unpair(id); err != nil {
+				return err
+			}
+		} else if err := t.node.Unpair(id); err != nil {
+			return err
+		}
+		fmt.Printf("Unpaired %s. Nothing synced with it changes, and it can pair\n", id)
+		fmt.Println("again with a new offer.")
+		return nil
+	})
 }
 
 func cmdVersions(args []string) error {

@@ -310,8 +310,10 @@ func (n *Node) recordSync(deviceID, libID string, gen uint64, err error) {
 	switch {
 	case err != nil:
 		n.Log.Warn("sync failed", "library", libID, "device", name, "failures", m.failures, "retryIn", retryAfter(m.failures), "err", err)
+		n.publish("sync", libID, name, "warning", "syncing with "+name+" failed: "+peerText(err.Error()))
 	case m.failures > 0:
 		n.Log.Info("syncing again", "library", libID, "device", name, "failures", m.failures)
+		n.publish("sync", libID, name, "info", "syncing with "+name+" works again")
 	default:
 		n.Log.Debug("synced", "library", libID, "device", name)
 	}

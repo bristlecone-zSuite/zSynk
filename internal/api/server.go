@@ -56,6 +56,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/libraries/{id}/deletes/restore", s.restoreDeletes)
 	mux.HandleFunc("GET /v1/libraries/{id}/versions", s.versions)
 	mux.HandleFunc("POST /v1/libraries/{id}/versions/restore", s.restoreVersion)
+	mux.HandleFunc("POST /v1/libraries/{id}/pause", s.pauseLibrary)
+	mux.HandleFunc("POST /v1/libraries/{id}/resume", s.resumeLibrary)
+	mux.HandleFunc("DELETE /v1/libraries/{id}", s.removeLibrary)
+	mux.HandleFunc("DELETE /v1/peers/{id}", s.unpair)
+	mux.HandleFunc("GET /v1/events", s.events)
 	mux.HandleFunc("POST /v1/pair/start", s.pairStart)
 	mux.HandleFunc("POST /v1/pair/join", s.pairJoin)
 	mux.HandleFunc("GET /v1/pair/code", s.pairCode)
@@ -445,6 +450,102 @@ func Diagnose(st engine.Status) Report {
 	return Report{OK: len(issues) == 0, Issues: issues, Status: st}
 }
 
+// pauseLibrary stops syncing a library until it's resumed. Its files
+// stay as they are.
+func (s *Server) pauseLibrary(w http.ResponseWriter, r *http.Request) {
+	if !decode(w, r, &struct{}{}) {
+		return
+	}
+	id := r.PathValue("id")
+	if err := s.Node.PauseLibrary(id); err != nil {
+		writeEngineError(w, err, http.StatusInternalServerError)
+		return
+	}
+	lib, _ := s.Node.Library(id)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "library": lib})
+}
+
+// resumeLibrary starts a paused library syncing again.
+func (s *Server) resumeLibrary(w http.ResponseWriter, r *http.Request) {
+	if !decode(w, r, &struct{}{}) {
+		return
+	}
+	id := r.PathValue("id")
+	if err := s.Node.ResumeLibrary(id); err != nil {
+		writeEngineError(w, err, http.StatusInternalServerError)
+		return
+	}
+	lib, _ := s.Node.Library(id)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "library": lib})
+}
+
+// removeLibrary forgets a library. Synk keeps every file, the library's
+// .synk marker, the versions in the vault, and the index, so enabling
+// the folder again picks up where it left off.
+func (s *Server) removeLibrary(w http.ResponseWriter, r *http.Request) {
+	if !decode(w, r, &struct{}{}) {
+		return
+	}
+	if err := s.Node.RemoveLibrary(r.PathValue("id")); err != nil {
+		writeEngineError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// unpair forgets a paired device: every library stops sharing with it,
+// and its connections are refused. Nothing on disk changes.
+func (s *Server) unpair(w http.ResponseWriter, r *http.Request) {
+	if !decode(w, r, &struct{}{}) {
+		return
+	}
+	if err := s.Node.Unpair(r.PathValue("id")); err != nil {
+		writeEngineError(w, err, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": s.Node.Status()})
+}
+
+// events streams what happens on this device as it happens, one JSON
+// event per `data:` line, with a comment now and then to keep the
+// connection alive. A reader that falls behind loses events rather
+// than slowing the daemon down.
+func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	ch, cancel := s.Node.Subscribe()
+	defer cancel()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		return
+	}
+	_, _ = io.WriteString(w, "retry: 3000\n\n")
+	fl.Flush()
+	ping := time.NewTicker(15 * time.Second)
+	defer ping.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case e := <-ch:
+			b, err := json.Marshal(e)
+			if err != nil {
+				return
+			}
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+				return
+			}
+			fl.Flush()
+		case <-ping.C:
+			if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
+				return
+			}
+			fl.Flush()
+		}
+	}
+}
+
 func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Diagnose(s.Node.Status()))
 }
@@ -478,7 +579,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 func writeEngineError(w http.ResponseWriter, err error, fallback int) {
 	code := fallback
 	switch {
-	case errors.Is(err, engine.ErrUnknownLibrary), errors.Is(err, vault.ErrNoVersion):
+	case errors.Is(err, engine.ErrUnknownLibrary), errors.Is(err, vault.ErrNoVersion), errors.Is(err, engine.ErrUnknownPeer):
 		code = http.StatusNotFound
 	case errors.Is(err, engine.ErrInvalidLibrary), errors.Is(err, engine.ErrLibraryPath), errors.Is(err, engine.ErrPairingRejected),
 		errors.Is(err, engine.ErrInvalidPath):

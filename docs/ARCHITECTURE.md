@@ -46,6 +46,12 @@ The joiner advertises its listen *port*; the acceptor stores `remoteIP:listenPor
 
 LAN is TCP on port 7420. When NAT would block a path, devices can use an optional dumb relay that splices already-encrypted frames (see `relay/`). The relay cannot read file bytes. If a future build uses Syncthing’s relay network, this component can be skipped.
 
+## The local API, and what the apps see
+
+One process at a time holds the data folder, under a lock in `SYNK_DIR`. The daemon holds it while it runs; every `synk` command tries the folder first and, while a daemon is running, goes through the daemon's local API instead — loopback only, bearer-token authenticated, hostile to browsers. The apps on the device use the same API: `GET /v1/status` reports every library's state with the reason anything is stuck, and `GET /v1/events` streams what happens as it happens (a sync that failed and why, deletes held for confirmation, a device that paired or unpaired, a library paused, resumed, or removed), as server-sent events. A reader that falls behind loses events rather than slowing the daemon; what happened is still in `synk.log` and in status.
+
+`synk pause` and `synk resume` stop and restart a library's syncing without touching its files. `synk remove` stops syncing a library and keeps everything — the files, the versions in the vault, and the index — so enabling the folder again picks up where it left off. `synk unpair` forgets a paired device: the libraries stop sharing with it and its connections are refused. None of these delete user data.
+
 ## iOS
 
 iOS cannot run a full daemon in the background. The companion app:

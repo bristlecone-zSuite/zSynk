@@ -113,6 +113,37 @@ func (c *Client) RestoreVersion(id, path, version string) (vault.Version, error)
 	return out.Restored, err
 }
 
+// PauseLibrary stops syncing a library until ResumeLibrary. Its files
+// stay as they are.
+func (c *Client) PauseLibrary(id string) (config.Library, error) {
+	var out struct {
+		Library config.Library `json:"library"`
+	}
+	err := c.do(http.MethodPost, "/v1/libraries/"+url.PathEscape(id)+"/pause", nil, &out)
+	return out.Library, err
+}
+
+// ResumeLibrary starts a paused library syncing again.
+func (c *Client) ResumeLibrary(id string) (config.Library, error) {
+	var out struct {
+		Library config.Library `json:"library"`
+	}
+	err := c.do(http.MethodPost, "/v1/libraries/"+url.PathEscape(id)+"/resume", nil, &out)
+	return out.Library, err
+}
+
+// RemoveLibrary forgets a library: Synk keeps its files, its versions,
+// and its index, and stops syncing it.
+func (c *Client) RemoveLibrary(id string) error {
+	return c.do(http.MethodDelete, "/v1/libraries/"+url.PathEscape(id), nil, nil)
+}
+
+// Unpair forgets a paired device: every library stops sharing with it,
+// and its connections are refused.
+func (c *Client) Unpair(id string) error {
+	return c.do(http.MethodDelete, "/v1/peers/"+url.PathEscape(id), nil, nil)
+}
+
 func (c *Client) do(method, path string, in, out any) error {
 	var body io.Reader
 	if in != nil {
