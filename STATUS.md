@@ -1,8 +1,8 @@
 # Status
 
 - **Current phase:** Phase 4, the Mac app (see [ROADMAP.md](ROADMAP.md)).
-- **Last done:** CI fixed: `app (macos)` job now installs `xcodegen` (was missing, causing build failure). All build/test jobs green (`relay`, `go (linux)`, `go (macos)`, `app (macos)`).
-- **Next step:** implement Bonjour discovery for device pairing and the iCloud "move" flow in the app picker; then the signed-build story.
+- **Last done:** Bonjour discovery for LAN device pairing landed — `Synk-<deviceID>` advertiser on `_synk._tcp.`, `NetServiceBrowser` discovery, `BonjourDiscoveryView` in onboarding, `pairWithDevice(deviceID, address:)` flow. `make check`, `make app-test`, and `swiftlint --strict` all green (commit 9c2f729).
+- **Next step:** iCloud "move" flow in the app picker (detect stale local presets, prompt to move to iCloud, update paths); then the signed-build story (Developer ID code signing for the Mac app).
 - **Blocked on:** nothing (a Developer ID signing identity stays a maintainer step; recorded in STATUS.md below).
 
 ## Needs the Maintainer
@@ -12,6 +12,7 @@
 
 ## Log
 
+- 2026-11-16: Phase 4 Bonjour discovery landed — `Synk-<deviceID>` advertiser on `_synk._tcp.`, `NetServiceBrowser` discovery, `BonjourDiscoveryView` in onboarding, `pairWithDevice(deviceID, address:)` flow. `make check`, `make app-test`, and `swiftlint --strict` all green.
 - 2026-11-16: Phase 4 onboarding groundwork: device naming (`POST /v1/config/name`), login item support (`GET/POST/DELETE /v1/login`), engine login item methods (`EnableLogin`/`DisableLogin`/`IsLoginEnabled`), non-Darwin stubs, Swift client methods (`setName`/`getLogin`/`enableLogin`/`disableLogin`), 3-step onboarding wizard (device name → app picker → QR pairing), login toggle in sidebar, and endpoint tests (all green).
 - 2026-11-16: Phase 4 begins: the Mac app builds from `project.yml` (XcodeGen) and its tests run two real daemons — pairing through the QR link, files syncing both ways, a version kept on overwrite and restored, pause/resume, and the event stream (decision 0006). The bundled engine is `synk-daemon`, not `synk`: on a case-insensitive volume `synk` overwrites the `Synk` app binary. `SynkClient` was rewritten for the token-authenticated API; CI gained an `app (macos)` job running `make app-test`.
 - 2026-11-16: Phase 3: `synk pause/resume/remove/unpair` with engine methods, API routes, client calls, and CLI (decision 0005 — removing keeps files, versions, and index); `GET /v1/events` streams sync failures, held deletes, and membership changes as server-sent events (engine pub/sub drops events for slow readers); journal compaction was already in place, M7 validation and the H10 daemon lock were verified as landed.
