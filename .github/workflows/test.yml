@@ -96,7 +96,7 @@ jobs:
           go-version-file: go.mod
       - name: SwiftLint
         run: |
-          brew install swiftlint
+          brew install swiftlint xcodegen
           swiftlint lint --strict apps/macos apps/shared apps/tests
       # The app tests drive two real daemons, so the engine is built first.
       - name: Build and test the Mac app
