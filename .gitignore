@@ -14,6 +14,7 @@ vendor/
 
 # Xcode / Swift
 .DS_Store
+Synk.xcodeproj/
 xcuserdata/
 DerivedData/
 *.xcuserstate

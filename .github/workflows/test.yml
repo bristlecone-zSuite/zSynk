@@ -84,6 +84,23 @@ jobs:
       - run: go test -race -count=1 ./...
       - name: staticcheck
         run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0-0.dev.0.20261009230814-452d5bb86b45 ./...
+  app:
+    name: app (macos)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: SwiftLint
+        run: |
+          brew install swiftlint
+          swiftlint lint --strict apps/macos apps/shared apps/tests
+      # The app tests drive two real daemons, so the engine is built first.
+      - name: Build and test the Mac app
+        run: make app-test
   relay:
     runs-on: ubuntu-latest
     defaults:

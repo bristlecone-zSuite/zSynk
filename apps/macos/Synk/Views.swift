@@ -90,7 +90,9 @@ struct DevicesPane: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Add a Mac or iPhone")
                 .font(.title)
-            Text("On the other device, tap Add device and scan this code — or type it. That’s the entire pairing process.")
+            Text("On the other device, tap Add device and scan this code — or type it.")
+                .foregroundStyle(.secondary)
+            Text("That's the entire pairing process.")
                 .foregroundStyle(.secondary)
             if let pair = model.pair {
                 Text(pair.code)
@@ -121,7 +123,8 @@ struct MenuStatus: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Synk").font(.headline)
             if let s = model.status {
-                Text(s.libraries.isEmpty ? "Pick apps to sync" : "\(s.libraries.count) libraries · \(s.peers.count) devices")
+                Text(s.libraries.isEmpty ? "Pick apps to sync"
+                    : "\(s.libraries.count) libraries · \(s.peers.count) devices")
             } else {
                 Text("Engine idle")
             }

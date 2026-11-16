@@ -1,9 +1,9 @@
 # Status
 
-- **Current phase:** Phase 3 (see [ROADMAP.md](ROADMAP.md)).
-- **Last done:** Phase 2 finished and pushed (resumable transfers, decision 0004, all four exit lines demonstrated); the six relay/worker npm vulnerabilities fixed by the wrangler upgrade; Phase 3's `pause`, `resume`, `remove`, `unpair` commands and the `GET /v1/events` event stream landed with tests (decision 0005).
-- **Next step:** push Phase 3 once `make check` is green and CI passes, then Phase 4, the Mac app to 0.1.0.
-- **Blocked on:** nothing.
+- **Current phase:** Phase 4, the Mac app (see [ROADMAP.md](ROADMAP.md)).
+- **Last done:** the app builds and its integration tests pass: `SynkClient` rewritten for the current API (token auth, all endpoints, event stream, `synk://pair` parsing); `Daemon.swift` starts and follows the bundled engine; `project.yml` + XcodeGen with the engine bundled as `synk-daemon` (decision 0006); Swift tests drive two real daemons end to end (pair → sync both ways → version kept on overwrite → restore, pause/resume, events); `make app` / `make app-test`; CI gained an `app (macos)` job.
+- **Next step:** onboarding and the full UI — name the device, pick apps with the iCloud move flow, pairing screen with QR, conflict center with restore and held deletes — then the login item and the signed-build story.
+- **Blocked on:** nothing (a Developer ID signing identity stays a maintainer step; recorded in STATUS.md below).
 
 ## Needs the Maintainer
 
@@ -12,6 +12,7 @@
 
 ## Log
 
+- 2026-11-16: Phase 4 begins: the Mac app builds from `project.yml` (XcodeGen) and its tests run two real daemons — pairing through the QR link, files syncing both ways, a version kept on overwrite and restored, pause/resume, and the event stream (decision 0006). The bundled engine is `synk-daemon`, not `synk`: on a case-insensitive volume `synk` overwrites the `Synk` app binary. `SynkClient` was rewritten for the token-authenticated API; CI gained an `app (macos)` job running `make app-test`.
 - 2026-11-16: Phase 3: `synk pause/resume/remove/unpair` with engine methods, API routes, client calls, and CLI (decision 0005 — removing keeps files, versions, and index); `GET /v1/events` streams sync failures, held deletes, and membership changes as server-sent events (engine pub/sub drops events for slow readers); journal compaction was already in place, M7 validation and the H10 daemon lock were verified as landed.
 - 2026-11-16: relay/worker: upgraded wrangler 4.148.0 → 4.163.0 to clear its transitive sharp and undici advisories; `npm audit` clean and `npm run check` passes.
 - 2026-11-16: Phase 2 benchmarks and scale tests landed. Resumable blob transfers: the `want` list and `blob` message carry offsets, staged partials live under `SYNK_DIR/blobs/partial/`, the whole blob's hash is verified before anything is stored (decision 0004, PROTOCOL.md updated). Measured on this machine: 4 GiB file synced in 61.7 s (66 MiB/s) and resumed from the interrupted GiB; idle warm scan of 19.5 GB across 200,000 files in 2.5 s with zero content reads (TestWarmScanReadsNoContent plants a wrong hash to prove it); 256 MiB file transfer raised peak memory by 1 MiB (TestMemoryDoesNotScaleWithFileSize); SYNK_DIR overhead bounded in TestSynkDirOverheadIsBounded.

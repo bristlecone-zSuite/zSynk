@@ -9,6 +9,7 @@ struct SynkApp: App {
             RootView()
                 .environmentObject(model)
                 .frame(minWidth: 720, minHeight: 520)
+                .task { await model.start() }
         }
         .windowStyle(.hiddenTitleBar)
 
@@ -24,27 +25,81 @@ struct SynkApp: App {
 final class SynkModel: ObservableObject {
     @Published var status: SynkStatus?
     @Published var presets: [Preset] = []
+    @Published var discovered: [DiscoveredApp] = []
     @Published var pair: PairOffer?
     @Published var error: String?
     @Published var daemonUp = false
-    private let client = SynkClient()
+    /// What happened most recently, newest first, from the event stream.
+    @Published var events: [SynkEvent] = []
+
+    private let daemon = Daemon()
+    private var client: SynkClient?
+    private var eventsTask: Task<Void, Never>?
+
+    /// Brings the daemon up and starts following what it reports. Does
+    /// nothing while running under XCTest: tests manage their own daemons,
+    /// and the app must not touch anyone's real data folder from a test.
+    func start() async {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else {
+            return
+        }
+        do {
+            let client = try await daemon.startIfNeeded()
+            self.client = client
+            daemonUp = true
+            error = nil
+            await refresh()
+            followEvents(client)
+        } catch {
+            daemonUp = false
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func followEvents(_ client: SynkClient) {
+        eventsTask?.cancel()
+        eventsTask = Task {
+            do {
+                for try await event in client.events() {
+                    if Task.isCancelled { return }
+                    events.insert(event, at: 0)
+                    if events.count > 100 {
+                        events.removeLast(events.count - 100)
+                    }
+                    await refresh()
+                }
+            } catch is CancellationError {
+            } catch {
+                // The daemon stopped; the next refresh says so.
+                daemonUp = false
+            }
+        }
+    }
 
     func refresh() async {
+        guard let client else {
+            await start()
+            return
+        }
         do {
             status = try await client.status()
-            let apps = try await client.apps()
-            presets = apps.catalog
+            let cat = try await client.catalog()
+            presets = cat.catalog
+            discovered = cat.discovered
             daemonUp = true
             error = nil
         } catch {
             daemonUp = false
-            self.error = "Synk is not running yet. Launching the local engine…"
+            self.error = error.localizedDescription
         }
     }
 
-    func enable(_ preset: Preset) async {
+    /// Enables a preset. `path` is where the app's files live: given for
+    /// in-place presets, or when the person picked a folder.
+    func enable(_ preset: Preset, path: String? = nil) async {
+        guard let client else { return }
         do {
-            try await client.enable(preset: preset.id, path: nil)
+            _ = try await client.enable(preset: preset.id, path: path, label: nil, id: nil)
             await refresh()
         } catch {
             self.error = error.localizedDescription
@@ -52,8 +107,45 @@ final class SynkModel: ObservableObject {
     }
 
     func offerPair() async {
+        guard let client else { return }
         do {
             pair = try await client.startPair()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Joins a device by reading its synk://pair link, from a QR or pasted.
+    func join(link: String) async {
+        guard let client else { return }
+        guard let parsed = PairLink(link: link) else {
+            error = "That isn't a Synk pairing code."
+            return
+        }
+        do {
+            try await client.joinPair(parsed)
+            pair = nil
+            await refresh()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func pause(_ library: LibraryState) async {
+        guard let client else { return }
+        do {
+            _ = try await client.pause(libraryID: library.libraryID)
+            await refresh()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func resume(_ library: LibraryState) async {
+        guard let client else { return }
+        do {
+            _ = try await client.resume(libraryID: library.libraryID)
+            await refresh()
         } catch {
             self.error = error.localizedDescription
         }

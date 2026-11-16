@@ -1,0 +1,23 @@
+# SwiftLint for the Synk apps. The style matches the existing Swift
+# sources: four-space indentation, SwiftUI idioms, short closure
+# parameter names allowed.
+line_length:
+  warning: 120
+  error: 200
+identifier_name:
+  min_length: 1
+  max_length: 60
+  excluded:
+    - id
+    - p
+    - e
+    - sa
+    - b
+    - d
+    - at
+type_body_length:
+  warning: 400
+file_length:
+  warning: 500
+function_body_length:
+  warning: 80

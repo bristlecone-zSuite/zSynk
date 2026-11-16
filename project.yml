@@ -1,0 +1,71 @@
+name: Synk
+options:
+  bundleIdPrefix: com.zyniker
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+targets:
+  Synk:
+    type: application
+    platform: macOS
+    sources:
+      - path: apps/macos/Synk
+      - path: apps/shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zyniker.synk
+        PRODUCT_NAME: Synk
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        INFOPLIST_KEY_CFBundleDisplayName: Synk
+        # Ad-hoc signed so a build runs on this Mac without a developer
+        # account. Release signing with a Developer ID identity needs the
+        # maintainer's Apple account; see STATUS.md, "Needs the Maintainer".
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: YES
+        # A separate debug dylib breaks test bundles that link the app on
+        # newer toolchains, and the app doesn't need it.
+        ENABLE_DEBUG_DYLIB: NO
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 0.1.0
+    postBuildScripts:
+      - name: Bundle the synk daemon
+        # The app carries the engine. `make build` makes bin/synk; the app
+        # runs it from its own bundle's MacOS folder, named synk-daemon —
+        # "synk" would overwrite the app binary itself on the
+        # case-insensitive volume (Synk vs synk).
+        script: |
+          set -euo pipefail
+          for candidate in "${SRCROOT}/bin/synk" "${PROJECT_DIR}/bin/synk"; do
+            if [ -f "$candidate" ]; then
+              cp "$candidate" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/MacOS/synk-daemon"
+              exit 0
+            fi
+          done
+          (cd "${PROJECT_DIR}" && make build)
+          cp "${PROJECT_DIR}/bin/synk" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app/Contents/MacOS/synk-daemon"
+        outputFiles: []
+        basedOnDependencyAnalysis: false
+  SynkTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: apps/tests
+    dependencies:
+      - target: Synk
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"
+schemes:
+  Synk:
+    build:
+      targets:
+        Synk: all
+        SynkTests: [test]
+    test:
+      targets:
+        - SynkTests

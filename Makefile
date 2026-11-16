@@ -4,7 +4,7 @@ BIN := bin/synk
 TOOLCHAIN := $(shell awk '/^toolchain/ {print $$2}' go.mod)
 TOOLRUN := GOTOOLCHAIN=$(TOOLCHAIN) $(GO) run
 
-.PHONY: test race check lint build vet fmt doctor
+.PHONY: test race check lint build vet fmt doctor app app-test lint-swift
 
 test:
 	$(GO) test ./...
@@ -34,3 +34,20 @@ build:
 doctor: build
 	SYNK_DIR=.data ./$(BIN) init --name "dev"
 	SYNK_DIR=.data ./$(BIN) doctor
+
+# The Mac app: generate the Xcode project, build the engine it carries,
+# and run the app's tests, which drive two real daemons.
+app: build
+	xcodegen generate
+	xcodebuild -project Synk.xcodeproj -scheme Synk -configuration Debug \
+		-destination 'platform=macOS' build CODE_SIGNING_ALLOWED=NO
+
+app-test: build
+	xcodegen generate
+	xcodebuild -project Synk.xcodeproj -scheme Synk -destination 'platform=macOS' \
+		test CODE_SIGNING_ALLOWED=NO
+
+lint-swift:
+	swiftlint lint --quiet apps/
+
+.PHONY: lint-swift
