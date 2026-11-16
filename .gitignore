@@ -1,0 +1,43 @@
+# Binaries
+/synk
+/synk-relay
+/bin/
+/dist/
+*.exe
+*.dylib
+*.so
+*.test
+*.out
+
+# Go
+vendor/
+
+# Xcode / Swift
+.DS_Store
+xcuserdata/
+DerivedData/
+*.xcuserstate
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Local daemon state
+.data/
+.tmp/
+.env
+
+# Node (relay)
+relay/worker/node_modules/
+relay/worker/dist/
+relay/worker/worker-configuration.d.ts
+.wrangler/
+
+# Coverage
+coverage.out
+coverage.html

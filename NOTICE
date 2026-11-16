@@ -1,0 +1,16 @@
+Synk
+Copyright 2026 Corey J. Mahler
+
+This product includes original work licensed under the Apache License, Version 2.0.
+
+Syncthing
+---------
+Syncthing is not vendored in this source tree. If a future Synk build
+bundles or links Syncthing (https://github.com/syncthing/syncthing), that
+component remains under the Mozilla Public License 2.0. Modifications to
+Syncthing source files, if any, will be published under MPL-2.0 as required.
+
+MPL-2.0 is a file-level weak copyleft license. It allows Syncthing to be
+combined with this Larger Work so long as Syncthing files (and modifications
+to those files) remain MPL-2.0 and their source is made available to recipients.
+See docs/LICENSE_AND_SYNCTHING.md.

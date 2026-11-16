@@ -1,0 +1,42 @@
+name: Bug report
+description: Something Synk did wrong, especially anything that lost, changed, or duplicated a file.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please don't attach real documents, your `SYNK_DIR`, device keys, or logs with file names you'd rather keep private. A small made-up library that shows the problem is best.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what Synk did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. synk init --name "Studio Mac"
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The output of `git rev-parse --short HEAD`, or the release.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Devices and OS versions
+      placeholder: macOS 26.1 on Apple silicon, iPadOS 26.1
+  - type: textarea
+    id: doctor
+    attributes:
+      label: synk doctor and synk log
+      description: Trim anything private.
+      render: text

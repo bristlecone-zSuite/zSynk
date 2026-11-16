@@ -1,0 +1,100 @@
+name: test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  changes:
+    # Docs-only gate. Lists the files this run changes. code=false only when every one is documentation, so the heavy jobs
+    # below skip; a skipped job reports success, so required checks still pass. Anything else, a diff that
+    # can't be read, or a run that isn't a pull request or push sets code=true and everything runs. Heavy jobs
+    # test code != 'false', so if this job itself fails they run rather than skip.
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Classify changed files
+        id: diff
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          run_all() { echo "$1: running everything."; echo "code=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          case "$EVENT_NAME" in
+            pull_request) # HEAD is the merge commit; its first parent is the base
+              git rev-parse -q --verify HEAD^2 >/dev/null || run_all "HEAD is not a merge commit"
+              base=HEAD^1 ;;
+            push)
+              if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then run_all "New branch"; fi
+              git cat-file -e "$BEFORE^{commit}" 2>/dev/null || git fetch -q --depth=1 origin "$BEFORE" || run_all "Could not fetch $BEFORE"
+              base=$BEFORE ;;
+            *) run_all "Event $EVENT_NAME" ;;
+          esac
+          changed=$(git diff --no-renames --name-only "$base" HEAD) || run_all "Could not diff against $base"
+          [ -n "$changed" ] || run_all "No files listed"
+          code=$(printf '%s\n' "$changed" | grep -vE '(\.md$|^docs/|^LICENSE(\.md|\.txt)?$|^(\.github/)?CODEOWNERS$|^\.github/ISSUE_TEMPLATE/)' || true)
+          if [ -n "$code" ]; then
+            printf 'Code files changed:\n%s\n' "$code"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            printf 'Documentation only:\n%s\n' "$changed"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  go:
+    name: go (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      # v0.8.1 can't read Go 1.27.2 export data. This is the master commit of
+      # 2026-10-09, which can; move back to a release once one includes it.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0-0.dev.0.20261009230814-452d5bb86b45 ./...
+  go-macos:
+    name: go (macos)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0-0.dev.0.20261009230814-452d5bb86b45 ./...
+  relay:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay/worker
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: relay/worker/package-lock.json
+      - run: npm ci
+      - run: npm run check
