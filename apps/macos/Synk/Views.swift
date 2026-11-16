@@ -80,28 +80,43 @@ struct StatusPane: View {
 
 struct AppsPane: View {
     @EnvironmentObject var model: SynkModel
+    @State private var configState: ConfigState?
+    @State private var presentingImporter = false
 
     var body: some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 220))], spacing: 16) {
-                ForEach(model.presets) { p in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(p.name).font(.headline)
-                        Text(p.summary).font(.subheadline).foregroundStyle(.secondary)
-                        Text(p.hint).font(.caption).foregroundStyle(.secondary)
-                        Button("Keep this in sync") {
-                            Task { await model.enable(p) }
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .padding()
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                ForEach(model.discovered) { app in
+                    AppCard(discovered: app, configState: $configState, presentingImporter: $presentingImporter)
                 }
             }
             .padding()
         }
         .navigationTitle("What should we keep in sync?")
+        .fileImporter(
+            isPresented: $presentingImporter,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result,
+               let url = urls.first,
+               var cfg = configState {
+                cfg.localPath = url.path
+                configState = cfg
+                Task { await model.enable(cfg.preset, path: cfg.localPath) }
+                configState = nil
+            } else {
+                configState = nil
+            }
+        }
     }
+}
+
+/// Holds the state for configuring a discovered app with a local path.
+struct ConfigState: Identifiable {
+    let id = UUID()
+    let preset: Preset
+    var localPath: String?
 }
 
 struct DevicesPane: View {

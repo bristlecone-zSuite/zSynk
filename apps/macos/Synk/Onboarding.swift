@@ -66,6 +66,9 @@ struct OnboardingView: View {
 
     @ViewBuilder
     func appPickerStep() -> some View {
+        @State var presentingImporter = false
+        @State var configState: ConfigState?
+
         VStack(spacing: 16) {
             Text("What should we keep in sync?")
                 .font(.title)
@@ -76,8 +79,8 @@ struct OnboardingView: View {
 
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 220))], spacing: 16) {
-                    ForEach(model.presets) { p in
-                        AppCard(preset: p)
+                    ForEach(model.discovered) { app in
+                        AppCard(discovered: app, configState: $configState, presentingImporter: $presentingImporter)
                     }
                 }
                 .padding()
@@ -86,6 +89,22 @@ struct OnboardingView: View {
             Button("Continue") { step = 2 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+        }
+        .fileImporter(
+            isPresented: $presentingImporter,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result,
+               let url = urls.first,
+               var cfg = configState {
+                cfg.localPath = url.path
+                configState = cfg
+                Task { await model.enable(cfg.preset, path: cfg.localPath) }
+                configState = nil
+            } else {
+                configState = nil
+            }
         }
     }
 
@@ -156,9 +175,15 @@ struct OnboardingView: View {
 // MARK: - App Card
 
 struct AppCard: View {
-    let preset: Preset
+    let discovered: DiscoveredApp
+    @Binding var configState: ConfigState?
+    @Binding var presentingImporter: Bool
     @EnvironmentObject var model: SynkModel
     @State private var enabled = false
+
+    var preset: Preset { discovered.preset }
+    var hasCloudPaths: Bool { !discovered.cloudPaths.isEmpty }
+    var localPath: String? { discovered.paths.first }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -168,10 +193,30 @@ struct AppCard: View {
             if let w = preset.warning {
                 Text(w).font(.caption).foregroundStyle(.orange)
             }
+            if hasCloudPaths {
+                Text("Files are in iCloud Drive — move to local folder first")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             if enabled {
                 Label("Enabled", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.caption)
+            } else if hasCloudPaths {
+                Button("Move to local folder") {
+                    presentingImporter = true
+                }
+                .buttonStyle(.borderedProminent)
+            } else if let path = localPath {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("at \(path)").font(.caption).foregroundStyle(.secondary)
+                    Button("Keep in sync") {
+                        Task {
+                            await model.enable(preset, path: path)
+                            enabled = true
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
             } else {
                 Button("Keep in sync") {
                     Task {
