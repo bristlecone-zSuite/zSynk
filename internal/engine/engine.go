@@ -805,3 +805,20 @@ func (n *Node) Status() Status {
 	}
 	return st
 }
+
+// EnableLogin registers the bundled engine as a login item so it starts
+// when the user logs in. The app bundle must be at the path given by
+// Daemon.appBundle.
+func (n *Node) EnableLogin() error {
+	return enableLogin(n.DataDir)
+}
+
+// DisableLogin removes the login item.
+func (n *Node) DisableLogin() error {
+	return disableLogin(n.DataDir)
+}
+
+// IsLoginEnabled reports whether the login item is registered.
+func (n *Node) IsLoginEnabled() (bool, error) {
+	return isLoginEnabled()
+}

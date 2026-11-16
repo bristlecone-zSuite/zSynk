@@ -353,11 +353,37 @@ struct SynkClient {
         }
     }
 
+    /// Sets the device's human-readable name.
+    func setName(_ name: String) async throws -> String {
+        let out: NameResponse = try await post("config/name", body: ["name": name])
+        return out.name
+    }
+
+    /// Checks whether the login item is enabled.
+    func getLogin() async throws -> Bool {
+        let out: LoginResponse = try await get("login")
+        return out.enabled
+    }
+
+    /// Enables the login item so the daemon starts on login.
+    func enableLogin() async throws -> Bool {
+        let out: LoginResponse = try await post("login", body: nil)
+        return out.enabled
+    }
+
+    /// Disables the login item.
+    func disableLogin() async throws -> Bool {
+        let out: LoginResponse = try await deleteWithBody("login")
+        return out.enabled
+    }
+
     // MARK: Plumbing
 
     private struct PathsResponse: Decodable { let paths: [String] }
     private struct VersionsResponse: Decodable { let versions: [SynkVersion] }
     private struct RestoreResponse: Decodable { let restored: SynkVersion }
+    private struct NameResponse: Decodable { let name: String }
+    private struct LoginResponse: Decodable { let enabled: Bool }
 
     private func request(_ method: String, _ path: String, body: Data?) -> URLRequest {
         var req = URLRequest(url: base.appending(path: "v1/" + path))
@@ -382,6 +408,10 @@ struct SynkClient {
     private func delete(_ path: String) async throws {
         struct Acknowledged: Decodable { let ok: Bool }
         let _: Acknowledged = try await run(request("DELETE", path, body: Data("{}".utf8)))
+    }
+
+    private func deleteWithBody<T: Decodable>(_ path: String) async throws -> T {
+        try await run(request("DELETE", path, body: Data("{}".utf8)))
     }
 
     private func run<T: Decodable>(_ req: URLRequest) async throws -> T {

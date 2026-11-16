@@ -29,8 +29,10 @@ final class SynkModel: ObservableObject {
     @Published var pair: PairOffer?
     @Published var error: String?
     @Published var daemonUp = false
+    @Published var loginEnabled = false
     /// What happened most recently, newest first, from the event stream.
     @Published var events: [SynkEvent] = []
+    @Published var showOnboarding = false
 
     private let daemon = Daemon()
     private var client: SynkClient?
@@ -88,6 +90,14 @@ final class SynkModel: ObservableObject {
             discovered = cat.discovered
             daemonUp = true
             error = nil
+            // Show onboarding if there are no libraries
+            showOnboarding = status?.libraries.isEmpty ?? true
+            // Check login item status
+            do {
+                loginEnabled = try await client.getLogin()
+            } catch {
+                loginEnabled = false
+            }
         } catch {
             daemonUp = false
             self.error = error.localizedDescription
@@ -113,6 +123,15 @@ final class SynkModel: ObservableObject {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    func setName(_ name: String) async throws -> String {
+        guard let client else {
+            throw NSError(
+                domain: "SynkModel", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Client not available"])
+        }
+        return try await client.setName(name)
     }
 
     /// Joins a device by reading its synk://pair link, from a QR or pasted.
@@ -148,6 +167,41 @@ final class SynkModel: ObservableObject {
             await refresh()
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    func restoreDeletes(_ libraryID: String) async {
+        guard let client else { return }
+        do {
+            _ = try await client.restoreDeletes(libraryID: libraryID)
+            await refresh()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func confirmDeletes(_ libraryID: String, paths: [String]) async {
+        guard let client else { return }
+        do {
+            _ = try await client.confirmDeletes(libraryID: libraryID, paths: paths)
+            await refresh()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func toggleLogin(_ enable: Bool) {
+        Task {
+            do {
+                if enable {
+                    _ = try await client?.enableLogin()
+                } else {
+                    _ = try await client?.disableLogin()
+                }
+                await refresh()
+            } catch {
+                self.error = error.localizedDescription
+            }
         }
     }
 }

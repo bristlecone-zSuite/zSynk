@@ -4,18 +4,39 @@ struct RootView: View {
     @EnvironmentObject var model: SynkModel
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                NavigationLink("Status") { StatusPane() }
-                NavigationLink("Apps") { AppsPane() }
-                NavigationLink("Devices") { DevicesPane() }
+        Group {
+            if model.showOnboarding {
+                OnboardingView()
+            } else {
+                NavigationSplitView {
+                    List {
+                        NavigationLink("Status") { StatusPane() }
+                        NavigationLink("Apps") { AppsPane() }
+                        NavigationLink("Devices") { DevicesPane() }
+                        if hasConflicts {
+                            NavigationLink("Conflicts") { ConflictCenter() }
+                        }
+                        Divider()
+                        Section("Settings") {
+                            Toggle("Start at login", isOn: Binding(
+                                get: { model.loginEnabled },
+                                set: { model.toggleLogin($0) }
+                            ))
+                        }
+                    }
+                    .navigationTitle("Synk")
+                    .listStyle(.sidebar)
+                } detail: {
+                    StatusPane()
+                }
             }
-            .navigationTitle("Synk")
-            .listStyle(.sidebar)
-        } detail: {
-            StatusPane()
         }
         .task { await model.refresh() }
+    }
+
+    private var hasConflicts: Bool {
+        guard let s = model.status else { return false }
+        return s.libraries.contains { !($0.heldDeletes?.isEmpty ?? true) }
     }
 }
 

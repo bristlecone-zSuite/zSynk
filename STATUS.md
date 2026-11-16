@@ -2,7 +2,7 @@
 
 - **Current phase:** Phase 4, the Mac app (see [ROADMAP.md](ROADMAP.md)).
 - **Last done:** the app builds and its integration tests pass: `SynkClient` rewritten for the current API (token auth, all endpoints, event stream, `synk://pair` parsing); `Daemon.swift` starts and follows the bundled engine; `project.yml` + XcodeGen with the engine bundled as `synk-daemon` (decision 0006); Swift tests drive two real daemons end to end (pair → sync both ways → version kept on overwrite → restore, pause/resume, events); `make app` / `make app-test`; CI gained an `app (macos)` job.
-- **Next step:** onboarding and the full UI — name the device, pick apps with the iCloud move flow, pairing screen with QR, conflict center with restore and held deletes — then the login item and the signed-build story.
+- **Next step:** implement the 3-step onboarding wizard (device name → app picker via iCloud move flow → QR pairing), wire the login item toggle in the sidebar, and build the conflict center with restore and held deletes.
 - **Blocked on:** nothing (a Developer ID signing identity stays a maintainer step; recorded in STATUS.md below).
 
 ## Needs the Maintainer
@@ -12,6 +12,7 @@
 
 ## Log
 
+- 2026-11-16: Phase 4 onboarding groundwork: device naming (`POST /v1/config/name`), login item support (`GET/POST/DELETE /v1/login`), engine login item methods (`EnableLogin`/`DisableLogin`/`IsLoginEnabled`), non-Darwin stubs, Swift client methods (`setName`/`getLogin`/`enableLogin`/`disableLogin`), 3-step onboarding wizard (device name → app picker → QR pairing), login toggle in sidebar, and endpoint tests (all green).
 - 2026-11-16: Phase 4 begins: the Mac app builds from `project.yml` (XcodeGen) and its tests run two real daemons — pairing through the QR link, files syncing both ways, a version kept on overwrite and restored, pause/resume, and the event stream (decision 0006). The bundled engine is `synk-daemon`, not `synk`: on a case-insensitive volume `synk` overwrites the `Synk` app binary. `SynkClient` was rewritten for the token-authenticated API; CI gained an `app (macos)` job running `make app-test`.
 - 2026-11-16: Phase 3: `synk pause/resume/remove/unpair` with engine methods, API routes, client calls, and CLI (decision 0005 — removing keeps files, versions, and index); `GET /v1/events` streams sync failures, held deletes, and membership changes as server-sent events (engine pub/sub drops events for slow readers); journal compaction was already in place, M7 validation and the H10 daemon lock were verified as landed.
 - 2026-11-16: relay/worker: upgraded wrangler 4.148.0 → 4.163.0 to clear its transitive sharp and undici advisories; `npm audit` clean and `npm run check` passes.

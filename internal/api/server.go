@@ -66,6 +66,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/pair/code", s.pairCode)
 	mux.HandleFunc("POST /v1/sync", s.sync)
 	mux.HandleFunc("GET /v1/doctor", s.doctor)
+	mux.HandleFunc("POST /v1/config/name", s.setDeviceName)
+	mux.HandleFunc("GET /v1/login", s.getLogin)
+	mux.HandleFunc("POST /v1/login", s.enableLogin)
+	mux.HandleFunc("DELETE /v1/login", s.disableLogin)
 	return guard(s.token, mux)
 }
 
@@ -548,6 +552,63 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) doctor(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Diagnose(s.Node.Status()))
+}
+
+type nameBody struct {
+	Name string `json:"name"`
+}
+
+// setDeviceName updates the device's human-readable name. The identity
+// keypair and device ID are unchanged; only the label changes.
+func (s *Server) setDeviceName(w http.ResponseWriter, r *http.Request) {
+	var body nameBody
+	if !decode(w, r, &body) {
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	s.Node.Config.DeviceName = name
+	if err := config.Save(s.Node.DataDir, s.Node.Config); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save name: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name})
+}
+
+// enableLogin registers the bundled engine as a login item.
+func (s *Server) enableLogin(w http.ResponseWriter, r *http.Request) {
+	if !decode(w, r, &struct{}{}) {
+		return
+	}
+	if err := s.Node.EnableLogin(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": true})
+}
+
+// getLogin checks whether the login item is enabled.
+func (s *Server) getLogin(w http.ResponseWriter, r *http.Request) {
+	enabled, err := s.Node.IsLoginEnabled()
+	if err != nil {
+		enabled = false
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
+}
+
+// disableLogin removes the login item.
+func (s *Server) disableLogin(w http.ResponseWriter, r *http.Request) {
+	if !decode(w, r, struct{}{}) {
+		return
+	}
+	if err := s.Node.DisableLogin(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": false})
 }
 
 // decode reads a JSON body into v. An empty body leaves v unchanged; unknown
