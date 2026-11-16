@@ -27,6 +27,25 @@ func readFile(path string) (string, error) {
 	return string(b), err
 }
 
+// bridge decodes the envelope the string-returning methods use. On
+// failure it returns the envelope's error text, so assertions read the
+// way a caller sees a failed call.
+func bridge(t *testing.T, envelope string) string {
+	t.Helper()
+	var e struct {
+		OK    bool            `json:"ok"`
+		Data  json.RawMessage `json:"data"`
+		Error string          `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(envelope), &e); err != nil {
+		t.Fatalf("envelope is not JSON: %v\n%s", err, envelope)
+	}
+	if !e.OK {
+		return "error: " + e.Error
+	}
+	return string(e.Data)
+}
+
 type statusJSON struct {
 	DeviceID string `json:"deviceId"`
 	Name     string `json:"name"`
@@ -38,20 +57,15 @@ type statusJSON struct {
 
 func statusOf(t *testing.T, s *Synk) statusJSON {
 	t.Helper()
-	b, err := s.Status()
-	if err != nil {
-		t.Fatalf("Status: %v", err)
-	}
 	var st statusJSON
-	if err := json.Unmarshal([]byte(b), &st); err != nil {
-		t.Fatalf("Status is not JSON: %v\n%s", err, b)
+	if err := json.Unmarshal([]byte(bridge(t, s.Status())), &st); err != nil {
+		t.Fatalf("Status payload is not JSON: %v", err)
 	}
 	return st
 }
 
 func TestOpenStatusFingerprintClose(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir, "iPhone")
+	s, err := Open(t.TempDir(), "iPhone")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -75,10 +89,7 @@ func TestOpenStatusFingerprintClose(t *testing.T) {
 func TestAddLibraryListsAndDefaults(t *testing.T) {
 	s := openTest(t, "iPhone")
 	path := filepath.Join(t.TempDir(), "vault")
-	lib, err := s.AddLibrary("obsidian", "", path)
-	if err != nil {
-		t.Fatalf("AddLibrary: %v", err)
-	}
+	lib := bridge(t, s.AddLibrary("obsidian", "", path))
 	var got struct {
 		ID     string `json:"id"`
 		Preset string `json:"preset"`
@@ -97,10 +108,7 @@ func TestAddLibraryListsAndDefaults(t *testing.T) {
 	if got.Path != path {
 		t.Errorf("Path = %q, want %q", got.Path, path)
 	}
-	list, err := s.Libraries()
-	if err != nil {
-		t.Fatalf("Libraries: %v", err)
-	}
+	list := bridge(t, s.Libraries())
 	if !strings.Contains(list, `"id":"obsidian"`) {
 		t.Errorf("Libraries = %s, want it to list the added library", list)
 	}
@@ -108,34 +116,45 @@ func TestAddLibraryListsAndDefaults(t *testing.T) {
 
 func TestAddLibraryUnknownPresetFails(t *testing.T) {
 	s := openTest(t, "iPhone")
-	if _, err := s.AddLibrary("does-not-exist", "", filepath.Join(t.TempDir(), "x")); err == nil {
-		t.Error("AddLibrary with an unknown preset succeeded, want an error")
+	out := s.AddLibrary("does-not-exist", "", filepath.Join(t.TempDir(), "x"))
+	var e struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(out), &e); err != nil {
+		t.Fatalf("envelope is not JSON: %v\n%s", err, out)
+	}
+	if e.OK {
+		t.Errorf("AddLibrary with an unknown preset succeeded: %s", out)
+	}
+	if !strings.Contains(e.Error, "unknown preset") {
+		t.Errorf("error = %q, want it to name the unknown preset", e.Error)
 	}
 }
 
 func TestPauseResumeRemoveRoundTrip(t *testing.T) {
 	s := openTest(t, "iPhone")
 	path := filepath.Join(t.TempDir(), "vault")
-	if _, err := s.AddLibrary("obsidian", "", path); err != nil {
-		t.Fatalf("AddLibrary: %v", err)
+	if out := s.AddLibrary("obsidian", "", path); strings.HasPrefix(bridge(t, out), "error: ") {
+		t.Fatalf("AddLibrary: %v", out)
 	}
 	if err := s.PauseLibrary("obsidian"); err != nil {
 		t.Fatalf("PauseLibrary: %v", err)
 	}
-	if list, err := s.Libraries(); err != nil || !strings.Contains(list, `"paused":true`) {
-		t.Errorf("Libraries after pause = %s, err %v; want paused true", list, err)
+	if list := bridge(t, s.Libraries()); !strings.Contains(list, `"paused":true`) {
+		t.Errorf("Libraries after pause = %s; want paused true", list)
 	}
 	if err := s.ResumeLibrary("obsidian"); err != nil {
 		t.Fatalf("ResumeLibrary: %v", err)
 	}
-	if list, err := s.Libraries(); err != nil || strings.Contains(list, `"paused":true`) {
-		t.Errorf("Libraries after resume = %s, err %v; want no paused library", list, err)
+	if list := bridge(t, s.Libraries()); strings.Contains(list, `"paused":true`) {
+		t.Errorf("Libraries after resume = %s; want no paused library", list)
 	}
 	if err := s.RemoveLibrary("obsidian"); err != nil {
 		t.Fatalf("RemoveLibrary: %v", err)
 	}
-	if list, err := s.Libraries(); err != nil || list != "[]" {
-		t.Errorf("Libraries after remove = %s, err %v; want []", list, err)
+	if list := bridge(t, s.Libraries()); list != "[]" {
+		t.Errorf("Libraries after remove = %s; want []", list)
 	}
 }
 
@@ -156,16 +175,12 @@ func TestPairThenSyncThroughMobile(t *testing.T) {
 	a := openTest(t, "Mac")
 	b := openTest(t, "iPhone")
 
-	offerJSON, err := a.StartPairing()
-	if err != nil {
-		t.Fatalf("StartPairing: %v", err)
-	}
 	var offer struct {
 		DeviceID string `json:"deviceId"`
 		QR       string `json:"qr"`
 	}
-	if err := json.Unmarshal([]byte(offerJSON), &offer); err != nil {
-		t.Fatalf("StartPairing returned bad JSON: %v\n%s", err, offerJSON)
+	if err := json.Unmarshal([]byte(bridge(t, a.StartPairing())), &offer); err != nil {
+		t.Fatalf("StartPairing payload is not JSON: %v", err)
 	}
 	if offer.QR == "" {
 		t.Fatal("StartPairing returned no QR link")
@@ -187,11 +202,11 @@ func TestPairThenSyncThroughMobile(t *testing.T) {
 	// A library on each side, in temporary folders only.
 	aPath := filepath.Join(t.TempDir(), "vault")
 	bPath := filepath.Join(t.TempDir(), "vault")
-	if _, err := a.AddLibrary("obsidian", "", aPath); err != nil {
-		t.Fatalf("AddLibrary on Mac: %v", err)
+	if out := a.AddLibrary("obsidian", "", aPath); strings.HasPrefix(bridge(t, out), "error: ") {
+		t.Fatalf("AddLibrary on Mac: %v", out)
 	}
-	if _, err := b.AddLibrary("obsidian", "", bPath); err != nil {
-		t.Fatalf("AddLibrary on iPhone: %v", err)
+	if out := b.AddLibrary("obsidian", "", bPath); strings.HasPrefix(bridge(t, out), "error: ") {
+		t.Fatalf("AddLibrary on iPhone: %v", out)
 	}
 
 	// Mac writes, iPhone pulls with its own sync call.

@@ -9,6 +9,9 @@
 *.test
 *.out
 
+# Generated iOS framework (make ios-framework)
+apps/ios/Frameworks/
+
 # Go
 vendor/
 

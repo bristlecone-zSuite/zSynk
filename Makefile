@@ -80,4 +80,25 @@ release: build
 	codesign --verify --deep --strict .build/release/Build/Products/Release/Synk.app
 	@echo "Verified: .build/release/Build/Products/Release/Synk.app"
 
-.PHONY: release
+# The iOS framework is generated from the mobile package with gomobile.
+# The x/mobile version comes from go.mod so the framework matches the
+# module that builds the rest of Synk. The framework is a build product:
+# it is git-ignored and every build regenerates it.
+XMOBILE := $(shell awk '$$2 == "golang.org/x/mobile" {print $$3}' go.mod)
+
+ios-framework:
+	mkdir -p apps/ios/Frameworks bin
+	GOBIN=$(CURDIR)/bin $(GO) install golang.org/x/mobile/cmd/gomobile@$(XMOBILE)
+	GOBIN=$(CURDIR)/bin $(GO) install golang.org/x/mobile/cmd/gobind@$(XMOBILE)
+	PATH=$(CURDIR)/bin:$(PATH) bin/gomobile bind -target=ios \
+		-o apps/ios/Frameworks/SynkCore.xcframework \
+		github.com/bristlecone-zSuite/zSynk/mobile
+
+# The iOS app: generate the project and build it for the simulator. The
+# framework is regenerated first so the app always links fresh bindings.
+ios-build: ios-framework
+	xcodegen generate
+	xcodebuild -project Synk.xcodeproj -scheme Synk-iOS \
+		-destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
+
+.PHONY: release ios-framework ios-build

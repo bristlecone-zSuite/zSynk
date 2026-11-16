@@ -78,6 +78,30 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_IDENTITY: "-"
+  Synk-iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: apps/ios/Synk
+      - path: apps/shared
+    dependencies:
+      # The framework is a build product (make ios-framework), generated
+      # from the mobile package by gomobile; see decision 0009.
+      - framework: apps/ios/Frameworks/SynkCore.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zyniker.synk
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Synk
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        # Syncing talks to the Mac on the local network; iOS requires the
+        # usage description before it lets a connection through.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Synk syncs your documents directly with your Mac over your local network."
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        SWIFT_VERSION: "5.10"
+        ENABLE_DEBUG_DYLIB: NO
 schemes:
   Synk:
     build:
@@ -87,3 +111,7 @@ schemes:
     test:
       targets:
         - SynkTests
+  Synk-iOS:
+    build:
+      targets:
+        Synk-iOS: all

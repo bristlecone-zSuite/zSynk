@@ -72,50 +72,47 @@ func (s *Synk) Fingerprint() string {
 
 // Status returns the same JSON as GET /v1/status: the device, its
 // libraries with their sync state, and its peers.
-func (s *Synk) Status() (string, error) {
+//
+// Methods whose result is a string return a JSON envelope instead of a
+// Go error: gomobile bridges a non-null string return and an out error
+// pointer in a way that cannot express "nil on error" safely, while
+// boolean results bridge to throws. The envelope is
+// {"ok":true,"data":…} or {"ok":false,"error":"…"}.
+func (s *Synk) Status() string {
 	b, err := json.Marshal(s.n.Status())
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return envelope(b, err)
 }
 
 // Libraries returns the configured libraries as JSON, the same array as
-// GET /v1/libraries.
-func (s *Synk) Libraries() (string, error) {
+// GET /v1/libraries, in the envelope form Status uses.
+func (s *Synk) Libraries() string {
 	b, err := json.Marshal(s.n.Libraries())
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return envelope(b, err)
 }
 
 // AddLibrary enables a library the way POST /v1/libraries does: the ID
 // defaults to the preset's, so the same app on two devices syncs between
 // them, and an empty path falls back to the preset's default location.
 // One library per preset is the iOS case; pass preset, label, and path.
-// It returns the stored library as JSON.
-func (s *Synk) AddLibrary(preset, label, path string) (string, error) {
+// It returns the stored library as JSON in the envelope form.
+func (s *Synk) AddLibrary(preset, label, path string) string {
 	l := config.Library{ID: preset, Preset: preset, Label: label, Path: path}
 	if l.Path == "" {
 		p, err := apps.DefaultPath(preset)
 		if err != nil {
-			return "", err
+			return envelope(nil, err)
 		}
 		l.Path = p
 	}
 	if err := s.n.EnableLibrary(l); err != nil {
-		return "", err
+		return envelope(nil, err)
 	}
 	lib, ok := s.n.Library(l.ID)
 	if !ok {
-		return "", errors.New("mobile: the library vanished as it was added")
+		return envelope(nil, errors.New("mobile: the library vanished as it was added"))
 	}
 	b, err := json.Marshal(lib)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return envelope(b, err)
 }
 
 // PauseLibrary stops syncing a library without touching its files.
@@ -134,19 +131,37 @@ func (s *Synk) RemoveLibrary(id string) error {
 	return s.n.RemoveLibrary(id)
 }
 
-// StartPairing arms a pairing offer and returns it as JSON: the code to
-// read out, the synk://pair link to show as a QR code, and the device
-// identity the joiner can pin. The offer expires if nobody joins.
-func (s *Synk) StartPairing() (string, error) {
+// StartPairing arms a pairing offer and returns it as JSON in the
+// envelope form: the code to read out, the synk://pair link to show as a
+// QR code, and the device identity the joiner can pin. The offer expires
+// if nobody joins.
+func (s *Synk) StartPairing() string {
 	offer, err := api.StartPairing(s.n)
 	if err != nil {
-		return "", err
+		return envelope(nil, err)
 	}
 	b, err := json.Marshal(offer)
+	return envelope(b, err)
+}
+
+// envelope wraps data — or err, if it is not nil — as the JSON envelope
+// the string-returning methods hand across the bridge: success carries
+// the payload under "data", failure the message under "error".
+func envelope(data []byte, err error) string {
 	if err != nil {
-		return "", err
+		e := struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		}{false, err.Error()}
+		b, _ := json.Marshal(e)
+		return string(b)
 	}
-	return string(b), nil
+	w := struct {
+		OK   bool            `json:"ok"`
+		Data json.RawMessage `json:"data"`
+	}{true, data}
+	b, _ := json.Marshal(w)
+	return string(b)
 }
 
 // PairWithMac pairs with the device that made the offer behind a scanned

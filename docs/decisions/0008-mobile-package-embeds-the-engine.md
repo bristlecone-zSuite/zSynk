@@ -11,9 +11,11 @@ only carries a narrow slice of Go's type system across to Swift.
 ## Decision
 
 - The public `mobile` package wraps `engine.Node`. Its exported surface
-  is only what gomobile can bind: methods on one pointer type with
-  `string`/`error` results. Values that would not bind — status,
-  libraries, pairing offers — cross as JSON strings with the same
+  is only what gomobile can bind: methods on one pointer type. Boolean
+  results cross as thrown errors; string results carry a JSON envelope
+  (`{"ok":true,"data":…}` / `{"ok":false,"error":"…"}`) because a
+  non-null string with an out error pointer cannot express "nil on
+  error" safely across the bridge. The envelope's payloads use the same
   shapes the REST API serves, so the app-side clients decode types they
   already have.
 - `mobile.Open` starts serving peer connections on an ephemeral port

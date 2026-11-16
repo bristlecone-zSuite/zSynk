@@ -22,7 +22,7 @@ final class Enumerator: NSObject, NSFileProviderEnumerator {
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        completionHandler(NSFileProviderSyncAnchor("synk".data(using: .utf8)!))
+        completionHandler(NSFileProviderSyncAnchor(Data("synk".utf8)))
     }
 }
 
