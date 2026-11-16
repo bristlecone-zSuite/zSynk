@@ -3,13 +3,15 @@ BIN := bin/synk
 # Analysis tools must be built with the same toolchain that compiles the module.
 TOOLCHAIN := $(shell awk '/^toolchain/ {print $$2}' go.mod)
 TOOLRUN := GOTOOLCHAIN=$(TOOLCHAIN) $(GO) run
-# xcodebuild needs the full Xcode. When the calling shell has not chosen one
-# (no DEVELOPER_DIR, xcode-select on Command Line Tools), pick the installed
-# Xcode so the app targets work from a plain shell.
-ifeq ($(origin DEVELOPER_DIR),undefined)
-DEVELOPER_DIR := $(shell ls -d /Applications/Xcode*.app/Contents/Developer 2>/dev/null | head -1)
+# xcodebuild needs the full Xcode. When the calling shell's selection
+# works, leave it alone — CI runners and other machines choose their own,
+# possibly newer Xcode than an alphabetical guess would. Only when
+# xcodebuild is unusable (plain shell with Command Line Tools selected)
+# does the Makefile pick the installed Xcode itself.
+XCODE_STATUS := $(shell xcodebuild -version >/dev/null 2>&1 && echo ok || echo missing)
+ifneq ($(XCODE_STATUS),ok)
+export DEVELOPER_DIR := $(shell ls -d /Applications/Xcode*.app/Contents/Developer 2>/dev/null | head -1)
 endif
-export DEVELOPER_DIR
 
 .PHONY: test race check lint build vet fmt doctor app app-test lint-swift
 
