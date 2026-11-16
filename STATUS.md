@@ -1,8 +1,8 @@
 # Status
 
-- **Current phase:** Phase 4, the Mac app (see [ROADMAP.md](ROADMAP.md)).
-- **Last done:** the signed-build story landed: `make release` produces a signed Release bundle (`SYNK_CODE_SIGN_IDENTITY` for Developer ID, ad-hoc without one), the post-build phase signs the bundled engine and re-signs the app so the seals stay valid, and the target verifies with `codesign --verify --deep --strict`. A Go binary was proven to run under the hardened runtime with no special entitlements (decision 0007); the bundled signed daemon was launched from the built app and served its API. CI now runs `make release` on macOS. Also landed this phase: Bonjour LAN discovery (9c2f729) and the iCloud move flow (b2c9209). All gates green: `make check`, `make app-test` (unpiped, TEST SUCCEEDED), `swiftlint --strict`.
-- **Next step:** Phase 5 iOS groundwork per ROADMAP.md — the `mobile` package and the iOS/FileProvider targets in `project.yml`. Phase 4's code is complete; its human half (a non-technical person pairing two Macs and syncing Obsidian and Keynote) is listed under "Needs the Maintainer".
+- **Current phase:** Phase 5, iOS (see [ROADMAP.md](ROADMAP.md)); Phase 4's code is complete and its human half is under "Needs the Maintainer".
+- **Last done:** Phase 5 started: the public `mobile` package embeds the engine for iOS — narrow gomobile-bindable API (JSON strings at the boundary), `Open` serves peers on an ephemeral port and runs the watch-and-sync loop, `AddLibrary`/`StartPairing`/`PairWithMac` mirror the REST API's semantics; `TestPairThenSyncThroughMobile` pairs two embedded nodes through a scanned link and syncs files both ways with no HTTP API or separate process; package cross-compiles for ios/arm64. Also landed in Phase 4: signed-build story (84ad564), Bonjour (9c2f729), iCloud move flow (b2c9209). All gates green.
+- **Next step:** the iOS app itself — `apps/ios` Synk target and File Provider extension in `project.yml` (XcodeGen), SwiftUI onboarding with camera QR pairing against the Mac's LAN API via `SynkClient`; gomobile xcframework binding once a target consumes it.
 - **Blocked on:** nothing (a Developer ID signing identity and notarization stay maintainer steps; recorded in STATUS.md below).
 
 ## Needs the Maintainer
@@ -13,6 +13,8 @@
 - Dependabot's vulnerability banner on the repo page may still list the six old findings until GitHub re-scans; the pushed lockfile is clean (`npm audit` reports zero).
 
 ## Log
+
+- 2026-11-16: Phase 5 began: the public `mobile` package embeds the engine for iOS — gomobile-bindable narrow API with JSON at the boundary, embedded lifecycle (`Open` serves peers on an ephemeral port and runs the watch loop), pairing and library calls mirroring the REST API. `TestPairThenSyncThroughMobile` proves two embedded nodes pair through a scanned link and sync files both ways without the HTTP API; the package cross-compiles for ios/arm64 (decision 0008).
 
 - 2026-11-16: Phase 4 signed-build story landed: `make release` (ad-hoc by default, Developer ID via `SYNK_CODE_SIGN_IDENTITY`), post-build signing of the bundled engine plus app re-sign so the seals stay valid, seal verification in the target, and a `DEVELOPER_DIR` fallback in the Makefile for plain shells. A hardened-runtime Go binary was proven to run with no extra entitlements, and the signed bundled daemon was launched from the built app and served its API (decision 0007). CI's app job now also runs `make release`.
 - 2026-11-16: Phase 4 Bonjour discovery landed — `Synk-<deviceID>` advertiser on `_synk._tcp.`, `NetServiceBrowser` discovery, `BonjourDiscoveryView` in onboarding, `pairWithDevice(deviceID, address:)` flow. `make check`, `make app-test`, and `swiftlint --strict` all green.

@@ -31,14 +31,14 @@ The build is ad-hoc signed (`CODE_SIGN_IDENTITY: "-"`), so it runs on the machin
 1. Add an iOS App **Synk** target (`apps/ios/Synk/`) and a File Provider extension target (`apps/ios/Synk/FileProvider/`) to `project.yml` when Phase 5 starts; the shared client already compiles for iOS.
 2. The long-term engine on iOS is the same Go code compiled with [gomobile](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile) into an `xcframework`. Until that target is wired, the iOS app uses the JSON protocol in `apps/shared/SynkClient.swift` against a paired Mac on the LAN.
 
-### gomobile (later)
+### gomobile
+
+The engine reaches Swift through the `mobile` package: a narrow, bindable API where complex values cross as JSON strings with the same shapes the REST API serves, and an opened node serves peers and runs the sync loop itself (decision 0008). Binding it into a framework:
 
 ```bash
 go install golang.org/x/mobile/cmd/gomobile@latest
-gomobile bind -target=ios -o dist/SynkCore.xcframework github.com/Zyniker13/synk/internal/engine
+gomobile bind -target=ios -o dist/SynkCore.xcframework github.com/bristlecone-zSuite/zSynk/mobile
 ```
-
-Export a narrower C API before binding; `internal/engine.Node` is the surface.
 
 ## Signing
 
