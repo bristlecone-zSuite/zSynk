@@ -75,6 +75,12 @@ type Node struct {
 	// cert carries the device's key in every connection with a peer.
 	cert tls.Certificate
 	lock *lockfile.Lock
+	// folds caches whether each library's volume folds case, and FoldProbe
+	// replaces the probe in tests. foldsMu guards folds, because the sync
+	// paths that read it already hold mu.
+	folds     map[string]bool
+	foldsMu   sync.Mutex
+	FoldProbe func(dir string) bool
 }
 
 // ErrInUse means another Node, usually `synk serve` in another process,
@@ -173,6 +179,7 @@ func open(dataDir, deviceName string) (*Node, error) {
 		held:          map[string][]string{},
 		confirmed:     map[string]map[string]bool{},
 		scanErrs:      map[string]string{},
+		folds:         map[string]bool{},
 		offer:         offer,
 		cert:          cert,
 	}
@@ -397,7 +404,7 @@ func (n *Node) Wants(local, remote *reconcile.Index) (hashes []string, release f
 	defer n.mu.Unlock()
 	var ops []reconcile.Op
 	if lib := n.Config.LibraryByID(remote.FolderID); lib != nil {
-		ops = n.opsFor(lib, local, remote)
+		ops = n.opsFor(lib, local, n.remoteFor(lib, local, remote))
 	}
 	needed := neededBlobs(ops)
 	for _, h := range needed {
@@ -511,6 +518,7 @@ func (n *Node) PullFrom(remote *reconcile.Index, get func(hash string) ([]byte, 
 		return err
 	}
 	local := n.indexes[lib.ID]
+	remote = n.remoteFor(lib, local, remote)
 	ops := n.opsFor(lib, local, remote)
 	if len(ops) == 0 {
 		return nil
@@ -673,7 +681,10 @@ func (n *Node) differs(local, remote *reconcile.Index) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	lib := n.Config.LibraryByID(remote.FolderID)
-	return lib != nil && len(n.opsFor(lib, local, remote)) > 0
+	if lib == nil {
+		return false
+	}
+	return len(n.opsFor(lib, local, n.remoteFor(lib, local, remote))) > 0
 }
 
 type Status struct {

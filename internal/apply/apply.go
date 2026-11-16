@@ -230,7 +230,7 @@ func (e *Env) applyOne(op reconcile.Op, idx *reconcile.Index) error {
 	case reconcile.OpDelete:
 		return e.applyDelete(op, idx)
 	case reconcile.OpSet:
-		return e.applySet(op.Path, target{op.KindFile, op.Hash, op.Size, op.Meta}, op, idx)
+		return e.applySetOrCollision(op.Path, target{op.KindFile, op.Hash, op.Size, op.Meta}, op, idx)
 	case reconcile.OpConflict:
 		if err := safepath.Check(op.ConflictPath); err != nil {
 			return fmt.Errorf("apply: %q: %w", op.ConflictPath, err)
@@ -256,6 +256,85 @@ type target struct {
 	hash string
 	size int64
 	meta reconcile.Meta
+}
+
+// applySetOrCollision writes want at rel, unless the file rel names on this
+// volume is one another index entry already holds, which is how a case- or
+// normalization-folding volume shows two spellings of one name. Writing
+// there would replace that file without a snapshot, so the content becomes
+// a conflict copy instead, and the file that is already there stays.
+func (e *Env) applySetOrCollision(rel string, want target, op reconcile.Op, idx *reconcile.Index) error {
+	if err := e.checkParents(rel); err != nil {
+		return err
+	}
+	if _, live := liveEntry(idx, rel); !live {
+		if st, exists, err := e.lstat(rel); err == nil && exists {
+			if claim := e.claimedBy(rel, st, idx); claim != "" {
+				return e.applyConflictCopy(rel, want, op, idx)
+			}
+		}
+	}
+	return e.applySet(rel, want, op, idx)
+}
+
+// claimedBy returns the live index path whose file is the one rel resolves
+// to: the same file by identity, not just by name. Candidates are the
+// entries whose name differs only in case from rel's.
+func (e *Env) claimedBy(rel string, st fs.FileInfo, idx *reconcile.Index) string {
+	dir, base := path.Split(rel)
+	for p, ent := range idx.Entries {
+		if p == rel || ent.Deleted || ent.Incomplete {
+			continue
+		}
+		pdir, pbase := path.Split(p)
+		if !strings.EqualFold(pdir, dir) || !strings.EqualFold(pbase, base) {
+			continue
+		}
+		cst, exists, err := e.lstat(p)
+		if err != nil || !exists {
+			continue
+		}
+		if os.SameFile(st, cst) {
+			return p
+		}
+	}
+	return ""
+}
+
+// applyConflictCopy stores want at the conflict name for rel, leaving the
+// file rel would have replaced in place. It is journaled like a set, and a
+// repeat of the same op finds the copy already there and does nothing.
+func (e *Env) applyConflictCopy(rel string, want target, op reconcile.Op, idx *reconcile.Index) error {
+	dst := reconcile.ConflictPath(rel, want.hash)
+	if ent, ok := liveEntry(idx, dst); ok && ent.Hash == want.hash && ent.Kind == want.kind {
+		return nil
+	}
+	tx := newTx()
+	stage := path.Join(stagingDir, tx)
+	if err := e.log(tx, journal.StatusStarted, "set", dst, want.hash,
+		"kept beside "+rel+", whose name is taken by another file on this device"); err != nil {
+		return err
+	}
+	if err := e.root.Mkdir(stage, 0o700); err != nil {
+		return e.rollback(tx, "set", dst, stage, err)
+	}
+	parts, err := e.stage(path.Join(stage, "new"), want)
+	if err != nil {
+		return e.rollback(tx, "set", dst, stage, err)
+	}
+	if err := e.log(tx, journal.StatusPrepared, "set", dst, want.hash, ""); err != nil {
+		return err
+	}
+	if err := e.swap(dst, stage, want.kind == reconcile.KindPackage); err != nil {
+		return e.rollback(tx, "set", dst, stage, err)
+	}
+	if err := e.log(tx, journal.StatusCommitted, "set", dst, want.hash,
+		"the name is taken by another file on this device"); err != nil {
+		return err
+	}
+	_ = e.root.RemoveAll(stage)
+	e.record(idx, dst, want, parts, op)
+	return nil
 }
 
 func (e *Env) applySet(rel string, want target, op reconcile.Op, idx *reconcile.Index) error {
