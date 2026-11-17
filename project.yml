@@ -89,19 +89,38 @@ targets:
       # from the mobile package by gomobile; see decision 0009.
       - framework: apps/ios/Frameworks/SynkCore.xcframework
         embed: true
+    # An explicit Info.plist, not INFOPLIST_KEY_ settings: Xcode's
+    # generated-plist keys silently drop the ones they don't know
+    # (UIFileSharingEnabled vanished that way), and these two keys are
+    # what makes Documents visible as Files → On My iPhone → Synk, with
+    # the files openable in place by the apps that read those formats
+    # (decision 0010).
+    info:
+      path: apps/ios/Synk/Info.plist
+      properties:
+        CFBundleDisplayName: Synk
+        UILaunchScreen: {}
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        NSLocalNetworkUsageDescription: "Synk syncs your documents directly with your Mac over your local network."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zyniker.synk
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Synk
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        # Syncing talks to the Mac on the local network; iOS requires the
-        # usage description before it lets a connection through.
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Synk syncs your documents directly with your Mac over your local network."
+        PRODUCT_MODULE_NAME: Synk
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         SWIFT_VERSION: "5.10"
         ENABLE_DEBUG_DYLIB: NO
+  SynkIOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: apps/ios-tests
+    dependencies:
+      - target: Synk-iOS
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   Synk:
     build:
@@ -115,3 +134,7 @@ schemes:
     build:
       targets:
         Synk-iOS: all
+        SynkIOSTests: [test]
+    test:
+      targets:
+        - SynkIOSTests

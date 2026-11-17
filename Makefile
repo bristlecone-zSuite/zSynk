@@ -102,6 +102,36 @@ ios-framework:
 ios-build:
 	xcodegen generate
 	xcodebuild -project Synk.xcodeproj -scheme Synk-iOS \
-		-destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO
+		-destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO \
+		-derivedDataPath .build/ios
 
-.PHONY: release ios-framework ios-build
+# The iOS tests run two embedded engines on the iOS runtime — the same
+# story the Go tests prove at the protocol level, now through the bridge
+# the app itself drives. They need a concrete simulator, so an iPhone is
+# picked by UDID inside the recipe: a device that is already booted is
+# left for whoever booted it (this Mac runs other work), one that was
+# shut down is shut down again after. Without any iPhone, the failure
+# shows simctl's own list.
+ios-test: ios-framework
+	xcodegen generate
+	UDID=$$(xcrun simctl list devices available 2>/dev/null | awk -F'[()]' '/iPhone/ && !/Booted/{ print $$2; exit }'); \
+	if [ -z "$$UDID" ]; then \
+		UDID=$$(xcrun simctl list devices available 2>/dev/null | awk -F'[()]' '/iPhone/{ print $$2; exit }'); \
+	fi; \
+	if [ -z "$$UDID" ]; then \
+		echo "no iOS simulator is available for ios-test; simctl says:"; \
+		xcrun simctl list devices available || true; \
+		exit 1; \
+	fi; \
+	WAS_BOOTED=$$(xcrun simctl list devices 2>/dev/null | awk -F'[()]' -v u="$$UDID" 'index($$0,u) && /Booted/{print "y"; exit}'); \
+	echo "Testing on iOS simulator $$UDID"; \
+	xcodebuild -project Synk.xcodeproj -scheme Synk-iOS \
+		-destination "id=$$UDID" test CODE_SIGNING_ALLOWED=NO \
+		-derivedDataPath .build/ios; \
+	STATUS=$$?; \
+	if [ -z "$$WAS_BOOTED" ]; then \
+		xcrun simctl shutdown "$$UDID" >/dev/null 2>&1 || true; \
+	fi; \
+	exit $$STATUS
+
+.PHONY: release ios-framework ios-build ios-test

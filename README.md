@@ -38,7 +38,8 @@ Synk is pre-release. The engine passes its test suite, including reproductions o
 | Folder watch and peer catch-up | Present |
 | `synk` CLI and loopback API | Present; the API needs a bearer token and rejects browsers |
 | Kept versions and restore | Present (`synk versions`, `synk restore`) |
-| macOS and iOS SwiftUI apps | Early sources in `apps/`; not yet working apps |
+| macOS SwiftUI app | Built and tested in CI against two real daemons; release signing machinery ready |
+| iOS SwiftUI app | Builds for the simulator with the engine embedded; pairing and libraries tested there; File Provider extension next |
 | Optional NAT relay | Cloudflare Worker in `relay/` deploys; the daemon has no relay client yet |
 
 What comes next is in [ROADMAP.md](ROADMAP.md), and where the work stands is in [STATUS.md](STATUS.md).

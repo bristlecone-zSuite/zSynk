@@ -75,12 +75,14 @@ struct SynkPeer: Codable, Identifiable {
     let lastSeen: Date?
 }
 
-/// A preset from the app catalog.
+/// A preset from the app catalog. `platforms` says where the preset can
+/// be used, so the apps offer only what works on the device they run on.
 struct Preset: Codable, Identifiable {
     let id: String
     let name: String
     let summary: String
     let kind: String
+    let platforms: [String]?
     let hint: String
     let warning: String?
     let iosHint: String?

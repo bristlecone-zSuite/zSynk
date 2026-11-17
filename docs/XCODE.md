@@ -28,15 +28,37 @@ The build is ad-hoc signed (`CODE_SIGN_IDENTITY: "-"`), so it runs on the machin
 
 ## iOS
 
-1. Add an iOS App **Synk** target (`apps/ios/Synk/`) and a File Provider extension target (`apps/ios/Synk/FileProvider/`) to `project.yml` when Phase 5 starts; the shared client already compiles for iOS.
-2. The long-term engine on iOS is the same Go code compiled with [gomobile](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile) into an `xcframework`. Until that target is wired, the iOS app uses the JSON protocol in `apps/shared/SynkClient.swift` against a paired Mac on the LAN.
+The iOS app target **Synk-iOS** lives in `project.yml`: sources in
+`apps/ios/Synk/` plus the shared client, with the engine embedded as a
+gomobile framework. It pairs by scanning or pasting a `synk://pair`
+link, adds libraries from the catalog into its own Documents folder,
+and syncs while the app is open.
+
+1. `make ios-framework` binds the `mobile` package into
+   `apps/ios/Frameworks/SynkCore.xcframework` — a build product,
+   git-ignored, pinned to the x/mobile version in go.mod.
+2. `make ios-build` builds the app for the simulator.
+3. `make ios-test` runs the iOS tests on a simulator: two embedded
+   engines pair through a link and sync files both ways, through the
+   same bridge calls the app drives.
+
+Libraries live in the app's Documents folder, one per app preset, and
+the Info.plist (`apps/ios/Synk/Info.plist`) carries
+`UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`, which
+is what makes Documents appear as Files → On My iPhone → Synk
+(decision 0010). The Info.plist is an explicit file rather than
+`INFOPLIST_KEY_` build settings, because Xcode silently drops
+generated-plist keys it does not know — `UIFileSharingEnabled` was lost
+exactly that way once.
+
+A File Provider extension target (`apps/ios/Synk/FileProvider/`) is the
+planned next step in Phase 5.
 
 ### gomobile
 
-The engine reaches Swift through the `mobile` package: a narrow, bindable API where complex values cross as JSON strings with the same shapes the REST API serves, and an opened node serves peers and runs the sync loop itself (decision 0008). Binding it into a framework:
+The engine reaches Swift through the `mobile` package: a narrow, bindable API where complex values cross as JSON strings with the same shapes the REST API serves, and an opened node serves peers and runs the sync loop itself (decision 0008). Build it with `make ios-framework`; by hand, the same bind is:
 
 ```bash
-go install golang.org/x/mobile/cmd/gomobile@latest
 gomobile bind -target=ios -o dist/SynkCore.xcframework github.com/bristlecone-zSuite/zSynk/mobile
 ```
 

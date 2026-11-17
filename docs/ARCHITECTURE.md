@@ -57,7 +57,7 @@ One process at a time holds the data folder, under a lock in `SYNK_DIR`. The dae
 iOS cannot run a full daemon in the background. The companion app:
 
 - Runs the same engine while foregrounded and during granted background tasks.
-- Presents libraries through a File Provider so Obsidian, iA Writer, Pages, and Keynote open files from **On My iPhone → Synk**.
+- Keeps each library in the app's Documents folder, one per app, so Files shows **On My iPhone → Synk** and Obsidian, iA Writer, Pages, and Keynote open the files in place. A File Provider extension is the planned deeper integration.
 - Treats a Mac (or any always-on paired device) as the usual catch-up peer. Two iPhones with no Mac in the middle will sync when both apps are open.
 
 That is honest. “Continuous iOS sync while the phone is in a pocket” is an Apple limitation, not a configuration problem.
