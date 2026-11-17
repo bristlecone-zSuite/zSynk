@@ -121,6 +121,10 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        # Match the app: without it xcodegen defaults the test target to
+        # the newest SDK, which no installed simulator may satisfy
+        # ("doesn't match … deployment target" in CI).
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
 schemes:
   Synk:
     build:
