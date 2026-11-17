@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -190,6 +191,40 @@ func TestSyncNowPullsThroughTheBridge(t *testing.T) {
 	}
 	if got, err := readFile(filepath.Join(bPath, "pulled.md")); err != nil || got != "pulled\n" {
 		t.Errorf("iPhone has %q, err %v; want %q", got, err, "pulled\n")
+	}
+}
+
+// TestCatalogListsPresetsForTheAppAddSheet drives the Catalog method the
+// app's add-library sheet reads: every preset with its platforms, so the
+// app can hide the Mac-only ones.
+func TestCatalogListsPresetsForTheAppAddSheet(t *testing.T) {
+	s := openTest(t, "iPhone")
+	var got []struct {
+		ID        string   `json:"id"`
+		Name      string   `json:"name"`
+		Platforms []string `json:"platforms"`
+	}
+	if err := json.Unmarshal([]byte(bridge(t, s.Catalog())), &got); err != nil {
+		t.Fatalf("Catalog payload is not a JSON array: %v", err)
+	}
+	var obsidian *struct {
+		ID        string   `json:"id"`
+		Name      string   `json:"name"`
+		Platforms []string `json:"platforms"`
+	}
+	for i := range got {
+		if got[i].ID == "obsidian" {
+			obsidian = &got[i]
+		}
+	}
+	if obsidian == nil {
+		t.Fatalf("Catalog = %+v, want it to list obsidian", got)
+	}
+	if obsidian.Name != "Obsidian" {
+		t.Errorf("obsidian name = %q, want %q", obsidian.Name, "Obsidian")
+	}
+	if !slices.Contains(obsidian.Platforms, "ios") {
+		t.Errorf("obsidian platforms = %v, want it to include ios", obsidian.Platforms)
 	}
 }
 

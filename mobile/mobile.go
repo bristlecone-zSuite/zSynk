@@ -152,6 +152,15 @@ func (s *Synk) StartPairing() string {
 	return envelope(b, err)
 }
 
+// Catalog returns the app catalog as JSON in the envelope form: every
+// preset with its platforms, so the app can offer what works on it. It is
+// the GET /v1/apps catalog without the Mac's discovered-apps section,
+// which reads Mac disk paths.
+func (s *Synk) Catalog() string {
+	b, err := json.Marshal(apps.Catalog())
+	return envelope(b, err)
+}
+
 // envelope wraps data — or err, if it is not nil — as the JSON envelope
 // the string-returning methods hand across the bridge: success carries
 // the payload under "data", failure the message under "error".
