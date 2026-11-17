@@ -158,6 +158,41 @@ func TestPauseResumeRemoveRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSyncNowPullsThroughTheBridge drives the exported SyncNow the app
+// calls when the person taps Sync now, and proves it does the same work
+// the watch loop would: a change made on the other side lands here.
+func TestSyncNowPullsThroughTheBridge(t *testing.T) {
+	a := openTest(t, "Mac")
+	b := openTest(t, "iPhone")
+
+	var offer struct {
+		QR string `json:"qr"`
+	}
+	if err := json.Unmarshal([]byte(bridge(t, a.StartPairing())), &offer); err != nil {
+		t.Fatalf("StartPairing payload is not JSON: %v", err)
+	}
+	if err := b.PairWithMac(offer.QR); err != nil {
+		t.Fatalf("PairWithMac: %v", err)
+	}
+	aPath := filepath.Join(t.TempDir(), "vault")
+	bPath := filepath.Join(t.TempDir(), "vault")
+	if out := a.AddLibrary("obsidian", "", aPath); strings.HasPrefix(bridge(t, out), "error: ") {
+		t.Fatalf("AddLibrary on Mac: %v", out)
+	}
+	if out := b.AddLibrary("obsidian", "", bPath); strings.HasPrefix(bridge(t, out), "error: ") {
+		t.Fatalf("AddLibrary on iPhone: %v", out)
+	}
+	if err := writeFile(filepath.Join(aPath, "pulled.md"), "pulled\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SyncNow(); err != nil {
+		t.Fatalf("SyncNow on iPhone: %v", err)
+	}
+	if got, err := readFile(filepath.Join(bPath, "pulled.md")); err != nil || got != "pulled\n" {
+		t.Errorf("iPhone has %q, err %v; want %q", got, err, "pulled\n")
+	}
+}
+
 func TestPairWithMacRejectsBadLink(t *testing.T) {
 	s := openTest(t, "iPhone")
 	if err := s.PairWithMac("https://example.com/not-synk"); err == nil {

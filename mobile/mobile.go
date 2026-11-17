@@ -120,6 +120,14 @@ func (s *Synk) PauseLibrary(id string) error {
 	return s.n.PauseLibrary(id)
 }
 
+// SyncNow syncs every shared library with every paired device right now,
+// the way `POST /v1/sync` does. The watch loop keeps libraries current on
+// its own; this is for the app's Sync now button and for tests that need
+// a deterministic sync.
+func (s *Synk) SyncNow() error {
+	return s.n.SyncAllPeers()
+}
+
 // ResumeLibrary resumes syncing a paused library.
 func (s *Synk) ResumeLibrary(id string) error {
 	return s.n.ResumeLibrary(id)
