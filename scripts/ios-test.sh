@@ -19,23 +19,31 @@ note() {
 	fi
 }
 
-# dump <logfile> — on failure, show the tail where a person can read it.
+# dump <logfile> — on failure, show the tail where a person can read it:
+# the step summary (run page) and, as a ::error workflow command, a
+# check-run annotation, which the public API exposes without
+# authentication.
 dump() {
 	logfile=$1
+	tail_text=$(tail -60 "$logfile" 2>/dev/null | tr -d '\r' | head -c 3500)
 	if [ -n "$SUMMARY" ]; then
 		{
 			echo '```'
-			tail -60 "$logfile" 2>/dev/null
+			printf '%s\n' "$tail_text"
 			echo '```'
 		} >> "$SUMMARY" || true
-	else
-		tail -60 "$logfile" 2>/dev/null
+	fi
+	if [ -n "$tail_text" ]; then
+		printf '::error::%s\n' "$(printf '%s' "$tail_text" | awk '{printf "%s%%0A", $0}')"
 	fi
 }
 
 note "## make ios-test"
-note "- xcodebuild: $(xcodebuild -version 2>&1 | head -1)"
-note "- xcodegen: $(xcodegen --version 2>&1 | head -1)"
+XB_VERSION=$(xcodebuild -version 2>&1 | head -1)
+XG_VERSION=$(xcodegen --version 2>&1 | head -1)
+note "- xcodebuild: $XB_VERSION"
+note "- xcodegen: $XG_VERSION"
+printf '::notice::xcodebuild %s; xcodegen %s\n' "$XB_VERSION" "$XG_VERSION"
 
 note "### bind the framework"
 if ! make ios-framework > .build/ios-framework.log 2>&1; then
