@@ -125,10 +125,18 @@ ios-test: ios-framework
 	fi; \
 	WAS_BOOTED=$$(xcrun simctl list devices 2>/dev/null | awk -F'[()]' -v u="$$UDID" 'index($$0,u) && /Booted/{print "y"; exit}'); \
 	echo "Testing on iOS simulator $$UDID"; \
+	LOG=.build/ios/ios-test-output.log; \
 	xcodebuild -project Synk.xcodeproj -scheme Synk-iOS \
 		-destination "id=$$UDID" test CODE_SIGNING_ALLOWED=NO \
-		-derivedDataPath .build/ios; \
+		-derivedDataPath .build/ios > "$$LOG" 2>&1; \
 	STATUS=$$?; \
+	if [ "$$STATUS" -ne 0 ]; then \
+		echo "make ios-test failed; the last 80 lines of xcodebuild:"; \
+		tail -80 "$$LOG"; \
+		if [ -n "$${GITHUB_STEP_SUMMARY:-}" ]; then \
+			{ echo "### make ios-test failed"; echo '```'; tail -120 "$$LOG"; echo '```'; } >> "$$GITHUB_STEP_SUMMARY"; \
+		fi; \
+	fi; \
 	if [ -z "$$WAS_BOOTED" ]; then \
 		xcrun simctl shutdown "$$UDID" >/dev/null 2>&1 || true; \
 	fi; \
