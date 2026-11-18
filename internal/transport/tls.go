@@ -106,3 +106,17 @@ func Dial(addr string, timeout time.Duration, cfg *tls.Config) (*tls.Conn, error
 	}
 	return c.(*tls.Conn), nil
 }
+
+// DialConn completes the handshake on a connection that is already open —
+// the way a relay splice hands a connection over — with the same pinned
+// keys as Dial. On error the connection is closed.
+func DialConn(raw net.Conn, timeout time.Duration, cfg *tls.Config) (*tls.Conn, error) {
+	c := tls.Client(raw, cfg)
+	_ = raw.SetDeadline(time.Now().Add(timeout))
+	if err := c.Handshake(); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	_ = raw.SetDeadline(time.Time{})
+	return c, nil
+}

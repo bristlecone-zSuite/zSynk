@@ -167,7 +167,7 @@ func TestSlowSessionsFinish(t *testing.T) {
 	dirA, dirB := library(t, a, "notes"), library(t, b, "notes")
 	content := strings.Repeat("v", 2<<20)
 	writeFile(t, dirA, "talk.mov", content)
-	slow := relay(t, listen(t, a), func(up bool, _ int64, _ []byte) {
+	slow := mitm(t, listen(t, a), func(up bool, _ int64, _ []byte) {
 		if !up {
 			time.Sleep(20 * time.Millisecond)
 		}
@@ -189,7 +189,7 @@ func TestStalledSessionsEnd(t *testing.T) {
 	writeFile(t, dirA, "talk.mov", strings.Repeat("v", 4<<20))
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	stalled := relay(t, listen(t, a), func(up bool, off int64, _ []byte) {
+	stalled := mitm(t, listen(t, a), func(up bool, off int64, _ []byte) {
 		if !up && off > 256<<10 {
 			<-release
 		}
@@ -467,7 +467,7 @@ func TestPeerTrafficIsPrivate(t *testing.T) {
 	addrA := listen(t, a)
 	var mu sync.Mutex
 	var wire bytes.Buffer
-	tapped := relay(t, addrA, func(_ bool, _ int64, p []byte) {
+	tapped := mitm(t, addrA, func(_ bool, _ int64, p []byte) {
 		mu.Lock()
 		defer mu.Unlock()
 		wire.Write(p)
@@ -500,7 +500,7 @@ func TestTamperedTrafficIsRejected(t *testing.T) {
 	// Past the handshake, in A's index.
 	const at = 16 << 10
 	var flipped atomic.Bool
-	tampered := relay(t, addrA, func(up bool, off int64, p []byte) {
+	tampered := mitm(t, addrA, func(up bool, off int64, p []byte) {
 		if !up && off <= at && at < off+int64(len(p)) {
 			p[at-off] ^= 1
 			flipped.Store(true)
@@ -529,7 +529,7 @@ func TestReplayedSessionIsRefused(t *testing.T) {
 	library(t, b, "notes")
 	var mu sync.Mutex
 	var sent bytes.Buffer
-	recorded := relay(t, addrA, func(up bool, _ int64, p []byte) {
+	recorded := mitm(t, addrA, func(up bool, _ int64, p []byte) {
 		if up {
 			mu.Lock()
 			defer mu.Unlock()
@@ -913,10 +913,10 @@ func acceptAs(t *testing.T, n *Node, serve func(c *tls.Conn)) (addr string, done
 	return ln.Addr().String(), ch
 }
 
-// relay passes connections to target through a new local address. edit
+// mitm passes connections to target through a new local address. edit
 // sees, and may change, what each side sends, at its offset in that
 // direction, before it's passed on.
-func relay(t *testing.T, target string, edit func(up bool, off int64, p []byte)) string {
+func mitm(t *testing.T, target string, edit func(up bool, off int64, p []byte)) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	must(t, err)

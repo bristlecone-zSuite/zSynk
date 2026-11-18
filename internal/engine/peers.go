@@ -13,6 +13,7 @@ import (
 	"github.com/bristlecone-zSuite/zSynk/internal/identity"
 	"github.com/bristlecone-zSuite/zSynk/internal/pairing"
 	"github.com/bristlecone-zSuite/zSynk/internal/transport"
+	"github.com/bristlecone-zSuite/zSynk/relay"
 )
 
 // maxPeerAddrs bounds the addresses kept for each paired device.
@@ -375,7 +376,8 @@ func (n *Node) syncPeers(onlyDue bool) error {
 }
 
 // syncPeer syncs a library with the paired device at the first of its
-// addresses that answers as that device.
+// addresses that answers as that device, or, when no address works and a
+// relay is configured, through the pair's relay room (decision 0013).
 func (n *Node) syncPeer(deviceID, folderID string) error {
 	p, ok := n.Peer(deviceID)
 	if !ok {
@@ -388,6 +390,57 @@ func (n *Node) syncPeer(deviceID, folderID string) error {
 			return n.syncOn(c, addr, folderID)
 		}
 	}
+	if relayAddr := n.relayURL(); relayAddr != "" {
+		err = n.relaySync(p, relayAddr, folderID)
+	}
 	n.recordSync(deviceID, folderID, 0, err)
 	return err
+}
+
+// relayURL returns the configured relay, or "" when none is set.
+func (n *Node) relayURL() string {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.Config.Relay
+}
+
+// relaySync runs one library sync through the pair's relay room. Both
+// devices dial the relay — the room exists only while they are both there —
+// and the device with the greater ID starts the session, sending hello
+// exactly as the dialer of a direct connection does; the other answers on
+// the connection the way the listener does. The role is a pure function of
+// the two IDs, so exactly one device takes each side (decision 0013).
+func (n *Node) relaySync(p config.Peer, relayAddr, folderID string) error {
+	conn, err := n.relayConn(p, relayAddr, folderID)
+	if err != nil {
+		return err
+	}
+	if n.Device.DeviceID > p.DeviceID {
+		c, err := transport.DialConn(conn, relayTimeout, transport.Config(n.cert, thisPeer(p)))
+		if err != nil {
+			return err
+		}
+		return n.syncOn(c, "", folderID)
+	}
+	// The answer's deadline must cover the other device's wait in the
+	// room before the splice forms.
+	_ = conn.SetDeadline(time.Now().Add(relayAnswerTimeout))
+	return n.handleConn(conn, true)
+}
+
+// relayConn joins the pair's relay room for the library and returns the
+// spliced connection to the peer. The room's secret derives from the two
+// public keys (decision 0012), so both devices find the same room without
+// any extra exchange, and its name includes the library (decision 0013).
+func (n *Node) relayConn(p config.Peer, relayAddr, folderID string) (net.Conn, error) {
+	peerKey, err := identity.ParsePublic(p.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("engine: relay: %s: %w", p.Name, err)
+	}
+	myKey, err := n.Device.Public()
+	if err != nil {
+		return nil, err
+	}
+	secret := relay.SecretFromKeys(myKey, peerKey)
+	return relay.Dial(relayAddr, "", secret, n.Device.DeviceID, p.DeviceID, folderID, relayTimeout)
 }

@@ -44,6 +44,39 @@ func TestDevicesAuthenticateEachOther(t *testing.T) {
 	}
 }
 
+// A connection that arrives already open, the way a relay splice hands a
+// connection over, completes the same handshake.
+func TestDialConnOnAnOpenStream(t *testing.T) {
+	server, serverKey := newCert(t)
+	client, clientKey := newCert(t)
+	addr, done := serveOnce(t, Config(server, func(ed25519.PublicKey) error { return nil }))
+
+	raw, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := DialConn(raw, 5*time.Second, Config(client, pin(serverKey)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	got, err := PeerKey(c.ConnectionState())
+	if err != nil || !got.Equal(serverKey) {
+		t.Fatalf("client sees %x, %v", got, err)
+	}
+	binding, err := Binding(c.ConnectionState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := <-done
+	if s.err != nil || !s.key.Equal(clientKey) {
+		t.Fatalf("server sees %x, %v", s.key, s.err)
+	}
+	if !bytes.Equal(s.binding, binding) || len(binding) != 32 {
+		t.Fatalf("bindings differ: %x and %x", s.binding, binding)
+	}
+}
+
 func TestHandshakeRefusals(t *testing.T) {
 	server, serverKey := newCert(t)
 	client, _ := newCert(t)

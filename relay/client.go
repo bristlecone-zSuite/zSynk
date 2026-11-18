@@ -23,15 +23,19 @@ import (
 )
 
 // RoomName derives the 64-character lowercase hex room name from the relay
-// secret and the two device IDs. Both devices compute the same name: the
-// IDs are sorted lexicographically, so order does not matter.
+// secret, the two device IDs, and a topic that separates a pair's rooms. A
+// sync session's topic is the library ID, so two libraries syncing with the
+// same peer through the relay at the same time land in different rooms
+// instead of splicing into each other (decision 0013). Both devices compute
+// the same name: the IDs are sorted lexicographically, so order does not
+// matter.
 //
 // The secret derives from the paired peers' public keys (decision 0012,
 // docs/PROTOCOL.md "Relay"): hex(SHA-256(min(kA,kB) || 0x00 || max(kA,kB)))
 // over the raw 32-byte keys. A room name is a rendezvous label, not an
 // authentication factor: knowing it lets an attacker occupy a slot, but the
 // pinned mutual TLS handshake still decides who talks to whom.
-func RoomName(secret string, myID, peerID string) string {
+func RoomName(secret string, myID, peerID, topic string) string {
 	a, b := myID, peerID
 	if a > b {
 		a, b = b, a
@@ -43,19 +47,21 @@ func RoomName(secret string, myID, peerID string) string {
 	io.WriteString(h, b)
 	io.WriteString(h, "\x00")
 	io.WriteString(h, secret)
+	io.WriteString(h, "\x00")
+	io.WriteString(h, topic)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Dial connects to the relay at relayURL (ws:// or wss://), joins the room
-// for (secret, myID, peerID), and completes the WebSocket upgrade. It does
-// not wait for the second peer; the Synk handshake over the returned conn
-// has its own deadline.
+// for (secret, myID, peerID, topic), and completes the WebSocket upgrade. It
+// does not wait for the second peer; the Synk handshake over the returned
+// conn has its own deadline.
 //
 // addr is the peer's direct address; it is used only for logging and
 // diagnostics. The returned conn carries the raw (or TLS-encrypted)
 // connection through which the Synk TLS handshake runs.
-func Dial(relayURL, addr, secret string, myID, peerID string, timeout time.Duration) (net.Conn, error) {
-	room := RoomName(secret, myID, peerID)
+func Dial(relayURL, addr, secret string, myID, peerID, topic string, timeout time.Duration) (net.Conn, error) {
+	room := RoomName(secret, myID, peerID, topic)
 	u, err := url.Parse(relayURL)
 	if err != nil {
 		return nil, fmt.Errorf("relay: parse relay URL: %w", err)

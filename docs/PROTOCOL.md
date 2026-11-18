@@ -103,16 +103,19 @@ leaves, the relay ends the room and closes the other side with the
 leaving peer's close code, or 1000.
 
 The room name is 64 lowercase hex digits, derived by both peers from
-information they already hold (decision 0012):
+information they already hold (decisions 0012 and 0013):
 
 ```
 secret = hex(SHA-256(min(kA,kB) || 0x00 || max(kA,kB)))
 room   = hex(SHA-256("synk/2 relay" || 0x00 || min(iA,iB) || 0x00
-                                  || max(iA,iB) || 0x00 || secret))
+                                  || max(iA,iB) || 0x00 || secret
+                                  || 0x00 || library))
 ```
 
 `kA` and `kB` are the peers' raw 32-byte public keys and `iA` and `iB`
-their printable device IDs, in each case ordered by bytes.
+their printable device IDs, in each case ordered by bytes. `library` is
+the ID of the library the session syncs, so two libraries syncing the
+same pair never share a room.
 
 The room name is a rendezvous label, not an authentication factor:
 knowing it lets someone occupy a slot in the room, and the pinned TLS

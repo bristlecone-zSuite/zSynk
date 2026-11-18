@@ -30,6 +30,16 @@ import (
 var (
 	handshakeTimeout = 10 * time.Second
 	dialTimeout      = 5 * time.Second
+
+	// relayTimeout covers joining the pair's relay room — the other device
+	// may still be on its way, and the relay holds the room for RoomWait —
+	// plus the TLS handshake over the spliced connection (decision 0013).
+	relayTimeout = 90 * time.Second
+
+	// relayAnswerTimeout is the deadline for a connection this device
+	// answered on: it must cover the other device's wait in the room
+	// before the splice forms (decision 0013).
+	relayAnswerTimeout = 90 * time.Second
 )
 
 // maxManifest bounds a package manifest from another device, which is
@@ -76,7 +86,7 @@ func (n *Node) acceptPeers(ln net.Listener) {
 		go func() {
 			defer gate.leave(host)
 			defer c.Close()
-			_ = n.handleConn(c)
+			_ = n.handleConn(c, false)
 		}()
 	}
 }
@@ -123,8 +133,15 @@ func (g *connGate) leave(host netip.Addr) {
 
 // handleConn serves one connection from another device: pairing with this
 // device's offer, or, for a paired device, a sync session for one library.
-func (n *Node) handleConn(raw net.Conn) error {
-	_ = raw.SetDeadline(time.Now().Add(handshakeTimeout))
+// A connection through the relay (viaRelay) never becomes the peer's
+// address, since the relay's address is not an address the peer can be
+// dialed on (decision 0013).
+func (n *Node) handleConn(raw net.Conn, viaRelay bool) error {
+	deadline := handshakeTimeout
+	if viaRelay {
+		deadline = relayAnswerTimeout
+	}
+	_ = raw.SetDeadline(time.Now().Add(deadline))
 	c := tls.Server(raw, n.serverTLS())
 	defer c.Close()
 	if err := c.Handshake(); err != nil {
@@ -146,7 +163,7 @@ func (n *Node) handleConn(raw net.Conn) error {
 		if !ok {
 			return refuse(c, "unknown device; pair first")
 		}
-		return n.handleHello(active{c, n.idleTimeout}, p, msg)
+		return n.handleHello(active{c, n.idleTimeout}, p, msg, viaRelay)
 	default:
 		return refuse(c, "expected hello or pair-join")
 	}
@@ -265,7 +282,7 @@ func (n *Node) handlePairJoin(c *tls.Conn, pub ed25519.PublicKey, msg transport.
 	return transport.WriteMsg(c, transport.Msg{Kind: transport.KindPairOK, Name: n.Device.Name, ListenPort: n.listenPort(), Proof: proof})
 }
 
-func (n *Node) handleHello(c net.Conn, p config.Peer, msg transport.Msg) (err error) {
+func (n *Node) handleHello(c net.Conn, p config.Peer, msg transport.Msg, viaRelay bool) (err error) {
 	switch err := n.shared(msg.FolderID, p.DeviceID); {
 	case errors.Is(err, ErrNotShared):
 		n.Log.Info("refused a library that isn't shared with the device", "library", peerText(msg.FolderID), "device", p.Name)
@@ -276,7 +293,14 @@ func (n *Node) handleHello(c net.Conn, p config.Peer, msg transport.Msg) (err er
 	var gen uint64
 	defer func() { n.recordSync(p.DeviceID, msg.FolderID, gen, err) }()
 	defer n.tasks.begin(Task{Library: msg.FolderID, Doing: Syncing, DeviceID: p.DeviceID})()
-	n.peerSeen(p.DeviceID, peerDialAddr(c.RemoteAddr(), msg.ListenPort))
+	// A connection through the relay came from the relay, not from a
+	// network the peer can be dialed on; record only that the peer was
+	// seen (decision 0013).
+	addr := ""
+	if !viaRelay {
+		addr = peerDialAddr(c.RemoteAddr(), msg.ListenPort)
+	}
+	n.peerSeen(p.DeviceID, addr)
 	if err := transport.WriteMsg(c, transport.Msg{Kind: transport.KindHelloOK}); err != nil {
 		return err
 	}

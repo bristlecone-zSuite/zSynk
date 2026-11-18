@@ -240,8 +240,8 @@ func upgradeStatus(t *testing.T, addr, room string) int {
 // ---- tests ----
 
 func TestRoomName(t *testing.T) {
-	a := relay.RoomName("secret", "device-a", "device-b")
-	b := relay.RoomName("secret", "device-b", "device-a")
+	a := relay.RoomName("secret", "device-a", "device-b", "notes")
+	b := relay.RoomName("secret", "device-b", "device-a", "notes")
 	if a != b {
 		t.Fatalf("room name is not order-independent: %s vs %s", a, b)
 	}
@@ -254,7 +254,7 @@ func TestRoomName(t *testing.T) {
 			t.Fatalf("room name %q is not lowercase hex", a)
 		}
 	}
-	if relay.RoomName("other-secret", "device-a", "device-b") == a {
+	if relay.RoomName("other-secret", "device-a", "device-b", "notes") == a {
 		t.Fatal("different secrets produced the same room name")
 	}
 }
@@ -265,12 +265,12 @@ func TestRoomName(t *testing.T) {
 // splice ever started.
 func TestSpliceBidirectional(t *testing.T) {
 	addr := startServer(t, 2*time.Second)
-	a, err := relay.Dial("ws://"+addr, "127.0.0.1:7420", "secret", "alice", "bob", 5*time.Second)
+	a, err := relay.Dial("ws://"+addr, "127.0.0.1:7420", "secret", "alice", "bob", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial a: %v", err)
 	}
 	defer a.Close()
-	b, err := relay.Dial("ws://"+addr, "127.0.0.1:7420", "secret", "alice", "bob", 5*time.Second)
+	b, err := relay.Dial("ws://"+addr, "127.0.0.1:7420", "secret", "alice", "bob", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial b: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestSpliceBidirectional(t *testing.T) {
 // TestLonePeerClosed: a room with one peer is closed after the wait.
 func TestLonePeerClosed(t *testing.T) {
 	addr := startServer(t, 300*time.Millisecond)
-	a, err := relay.Dial("ws://"+addr, "", "s", "a", "b", 5*time.Second)
+	a, err := relay.Dial("ws://"+addr, "", "s", "a", "b", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -309,12 +309,12 @@ func TestLonePeerClosed(t *testing.T) {
 // even with both peers present.
 func TestSpliceSurvivesRoomWait(t *testing.T) {
 	addr := startServer(t, 200*time.Millisecond)
-	a, err := relay.Dial("ws://"+addr, "", "s", "a", "b", 5*time.Second)
+	a, err := relay.Dial("ws://"+addr, "", "s", "a", "b", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial a: %v", err)
 	}
 	defer a.Close()
-	b, err := relay.Dial("ws://"+addr, "", "s", "a", "b", 5*time.Second)
+	b, err := relay.Dial("ws://"+addr, "", "s", "a", "b", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial b: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestSpliceSurvivesRoomWait(t *testing.T) {
 // room with 1009, and the other peer sees the same code.
 func TestOversizedFrameClosesWith1009(t *testing.T) {
 	addr := startServer(t, 2*time.Second)
-	room := relay.RoomName("s", "a", "b")
+	room := relay.RoomName("s", "a", "b", "notes")
 	ra := rawDial(t, addr, room)
 	rb := rawDial(t, addr, room)
 	// The relay closes the connection before the whole payload is written,
@@ -355,7 +355,7 @@ func TestOversizedFrameClosesWith1009(t *testing.T) {
 // TestMaxFrameBoundary: a frame of exactly MaxMessageBytes passes through.
 func TestMaxFrameBoundary(t *testing.T) {
 	addr := startServer(t, 2*time.Second)
-	room := relay.RoomName("s", "a", "b")
+	room := relay.RoomName("s", "a", "b", "notes")
 	ra := rawDial(t, addr, room)
 	rb := rawDial(t, addr, room)
 	big := make([]byte, relay.MaxMessageBytes)
@@ -379,7 +379,7 @@ func TestMaxFrameBoundary(t *testing.T) {
 // the room with 1003.
 func TestTextFrameClosesWith1003(t *testing.T) {
 	addr := startServer(t, 2*time.Second)
-	room := relay.RoomName("s", "a", "b")
+	room := relay.RoomName("s", "a", "b", "notes")
 	ra := rawDial(t, addr, room)
 	rb := rawDial(t, addr, room)
 	ra.send(0x1, []byte("text"), true)
@@ -399,7 +399,7 @@ func TestTextFrameClosesWith1003(t *testing.T) {
 // an unmasked client frame.
 func TestUnmaskedClientFrameRejected(t *testing.T) {
 	addr := startServer(t, 2*time.Second)
-	room := relay.RoomName("s", "a", "b")
+	room := relay.RoomName("s", "a", "b", "notes")
 	ra := rawDial(t, addr, room)
 	rb := rawDial(t, addr, room)
 	ra.send(0x2, []byte("x"), false) // unmasked: protocol violation.
@@ -426,11 +426,11 @@ func TestUnmaskedClientFrameRejected(t *testing.T) {
 // TestClosePropagates: closing one end ends the session for the other.
 func TestClosePropagates(t *testing.T) {
 	addr := startServer(t, 2*time.Second)
-	a, err := relay.Dial("ws://"+addr, "", "s", "a", "b", 5*time.Second)
+	a, err := relay.Dial("ws://"+addr, "", "s", "a", "b", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial a: %v", err)
 	}
-	b, err := relay.Dial("ws://"+addr, "", "s", "a", "b", 5*time.Second)
+	b, err := relay.Dial("ws://"+addr, "", "s", "a", "b", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial b: %v", err)
 	}
@@ -454,22 +454,22 @@ func TestClosePropagates(t *testing.T) {
 // TestConcurrentRooms: two rooms splice independently.
 func TestConcurrentRooms(t *testing.T) {
 	addr := startServer(t, 2*time.Second)
-	a1, err := relay.Dial("ws://"+addr, "", "s1", "a", "b", 5*time.Second)
+	a1, err := relay.Dial("ws://"+addr, "", "s1", "a", "b", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a1.Close()
-	b1, err := relay.Dial("ws://"+addr, "", "s1", "a", "b", 5*time.Second)
+	b1, err := relay.Dial("ws://"+addr, "", "s1", "a", "b", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b1.Close()
-	a2, err := relay.Dial("ws://"+addr, "", "s2", "c", "d", 5*time.Second)
+	a2, err := relay.Dial("ws://"+addr, "", "s2", "c", "d", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a2.Close()
-	b2, err := relay.Dial("ws://"+addr, "", "s2", "c", "d", 5*time.Second)
+	b2, err := relay.Dial("ws://"+addr, "", "s2", "c", "d", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,13 +492,13 @@ func TestConcurrentRooms(t *testing.T) {
 // TestRoomFull: a third peer gets 409.
 func TestRoomFull(t *testing.T) {
 	addr := startServer(t, 2*time.Second)
-	room := relay.RoomName("s", "a", "b")
-	a, err := relay.Dial("ws://"+addr, "", "s", "a", "b", 5*time.Second)
+	room := relay.RoomName("s", "a", "b", "notes")
+	a, err := relay.Dial("ws://"+addr, "", "s", "a", "b", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer a.Close()
-	b, err := relay.Dial("ws://"+addr, "", "s", "a", "b", 5*time.Second)
+	b, err := relay.Dial("ws://"+addr, "", "s", "a", "b", "notes", 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +534,7 @@ func TestBadRoomPaths(t *testing.T) {
 // TestNonWebSocketRejected: a plain GET to a valid room is not upgraded.
 func TestNonWebSocketRejected(t *testing.T) {
 	addr := startServer(t, 2*time.Second)
-	room := relay.RoomName("s", "a", "b")
+	room := relay.RoomName("s", "a", "b", "notes")
 	resp, err := http.Get("http://" + addr + "/v1/rooms/" + room)
 	if err != nil {
 		t.Fatal(err)
