@@ -38,9 +38,9 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{t: t, root: t.TempDir(), idx: reconcile.NewIndex("lib", "A")}
 	must(t, os.Mkdir(filepath.Join(f.root, ".synk"), 0o700))
 	var err error
-	f.store, err = blob.New(t.TempDir())
+	f.store, err = blob.New(t.TempDir(), nil)
 	must(t, err)
-	f.vault, err = vault.Open(t.TempDir())
+	f.vault, err = vault.Open(t.TempDir(), nil)
 	must(t, err)
 	f.j, err = journal.Open(t.TempDir())
 	must(t, err)

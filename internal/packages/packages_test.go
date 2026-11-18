@@ -52,7 +52,7 @@ func TestMaterialize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := blob.New(filepath.Join(dir, "blobs"))
+	store, err := blob.New(filepath.Join(dir, "blobs"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestMaterialize(t *testing.T) {
 
 func TestMaterializeRejectsUnsafeManifests(t *testing.T) {
 	dir := t.TempDir()
-	store, err := blob.New(filepath.Join(dir, "blobs"))
+	store, err := blob.New(filepath.Join(dir, "blobs"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestMaterializeRejectsUnsafeManifests(t *testing.T) {
 
 func TestMaterializeRejectsWrongSize(t *testing.T) {
 	dir := t.TempDir()
-	store, err := blob.New(filepath.Join(dir, "blobs"))
+	store, err := blob.New(filepath.Join(dir, "blobs"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

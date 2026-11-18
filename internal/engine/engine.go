@@ -148,11 +148,11 @@ func open(dataDir, deviceName string) (*Node, error) {
 		cfg.DeviceName = deviceName
 		_ = config.Save(dataDir, cfg)
 	}
-	store, err := blob.New(filepath.Join(dataDir, "blobs"))
+	v, vaultKey, err := openVault(dataDir)
 	if err != nil {
 		return nil, err
 	}
-	v, err := vault.Open(filepath.Join(dataDir, "vault"))
+	store, err := blob.New(filepath.Join(dataDir, "blobs"), vault.NewCipher(vaultKey))
 	if err != nil {
 		return nil, err
 	}
@@ -714,9 +714,12 @@ type Status struct {
 	API      string `json:"api,omitempty"`
 	// Relay is the optional relay URL the node dials when direct
 	// connections fail; empty means direct LAN connections only.
-	Relay     string         `json:"relay,omitempty"`
-	Libraries []LibraryState `json:"libraries"`
-	Peers     []config.Peer  `json:"peers"`
+	Relay string `json:"relay,omitempty"`
+	// VaultEncrypted says whether the node's vault (its file versions)
+	// is sealed at rest with a passphrase.
+	VaultEncrypted bool           `json:"vaultEncrypted"`
+	Libraries      []LibraryState `json:"libraries"`
+	Peers          []config.Peer  `json:"peers"`
 }
 
 type LibraryState struct {
@@ -767,13 +770,14 @@ func (n *Node) Status() Status {
 	// Callers encode the result after the lock is released, so nothing in it
 	// may share memory with the config.
 	st := Status{
-		DeviceID:  n.Device.DeviceID,
-		Name:      n.Device.Name,
-		Listen:    listen,
-		API:       n.Config.API,
-		Relay:     n.Config.Relay,
-		Libraries: []LibraryState{},
-		Peers:     make([]config.Peer, 0, len(n.Config.Peers)),
+		DeviceID:       n.Device.DeviceID,
+		Name:           n.Device.Name,
+		Listen:         listen,
+		API:            n.Config.API,
+		Relay:          n.Config.Relay,
+		VaultEncrypted: vault.IsEncrypted(filepath.Join(n.DataDir, "vault")),
+		Libraries:      []LibraryState{},
+		Peers:          make([]config.Peer, 0, len(n.Config.Peers)),
 	}
 	for _, p := range n.Config.Peers {
 		p.Addresses = slices.Clone(p.Addresses)

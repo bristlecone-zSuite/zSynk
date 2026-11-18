@@ -31,7 +31,7 @@ func write(t *testing.T, root, rel, data string) {
 
 func run(t *testing.T, root string, opts Options) (*Result, *blob.Store) {
 	t.Helper()
-	store, err := blob.New(t.TempDir())
+	store, err := blob.New(t.TempDir(), nil)
 	must(t, err)
 	res, err := Library(root, opts, store)
 	must(t, err)
@@ -89,7 +89,7 @@ func TestScanReportsExecutableBitsAndModificationTimes(t *testing.T) {
 		"notes.md": {MTime: 2000e9},
 		"Talk.key": {MTime: 4000e9},
 	}
-	store, err := blob.New(t.TempDir())
+	store, err := blob.New(t.TempDir(), nil)
 	must(t, err)
 	cache := &Cache{}
 	for _, scan := range []string{"first", "cached"} {
@@ -108,7 +108,7 @@ func TestScanReportsExecutableBitsAndModificationTimes(t *testing.T) {
 }
 
 func TestScanRequiresTheLibraryMarker(t *testing.T) {
-	store, err := blob.New(t.TempDir())
+	store, err := blob.New(t.TempDir(), nil)
 	must(t, err)
 	if _, err := Library(t.TempDir(), Options{}, store); !errors.Is(err, ErrNoMarker) {
 		t.Fatalf("err = %v", err)
@@ -149,7 +149,7 @@ func TestScanReportsWhatItCannotRead(t *testing.T) {
 
 	must(t, os.Chmod(root, 0o300))
 	t.Cleanup(func() { _ = os.Chmod(root, 0o700) })
-	store, err := blob.New(t.TempDir())
+	store, err := blob.New(t.TempDir(), nil)
 	must(t, err)
 	if _, err := Library(root, Options{}, store); err == nil {
 		t.Fatal("scanned a root it couldn't list")

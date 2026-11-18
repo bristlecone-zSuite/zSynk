@@ -19,7 +19,7 @@ import (
 func TestCacheReadsOnlyWhatChanged(t *testing.T) {
 	root := library(t)
 	write(t, root, "a.md", "hello")
-	store, err := blob.New(t.TempDir())
+	store, err := blob.New(t.TempDir(), nil)
 	must(t, err)
 	planted, err := store.Put([]byte("planted"))
 	must(t, err)
@@ -60,7 +60,7 @@ func TestCacheReadsOnlyWhatChanged(t *testing.T) {
 func TestCacheRereadsRecentChanges(t *testing.T) {
 	root := library(t)
 	write(t, root, "a.md", "hello")
-	store, err := blob.New(t.TempDir())
+	store, err := blob.New(t.TempDir(), nil)
 	must(t, err)
 	cache := &Cache{}
 	_, err = Library(root, Options{Cache: cache, Racy: time.Hour}, store)
@@ -94,7 +94,7 @@ func TestCacheChanged(t *testing.T) {
 	root := library(t)
 	write(t, root, "a.md", "hello")
 	write(t, root, "b.md", "world")
-	store, err := blob.New(t.TempDir())
+	store, err := blob.New(t.TempDir(), nil)
 	must(t, err)
 	cache := &Cache{}
 	for i, step := range []struct {
@@ -144,7 +144,7 @@ func TestCacheReusesUnchangedPackages(t *testing.T) {
 	root := library(t)
 	write(t, root, "Doc.pages/Index.zip", "idx")
 	write(t, root, "Doc.pages/Data/a.png", "png")
-	store, err := blob.New(t.TempDir())
+	store, err := blob.New(t.TempDir(), nil)
 	must(t, err)
 	cache := &Cache{}
 	scanned := func() Cached {

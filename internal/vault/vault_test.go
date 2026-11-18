@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
 	"os"
@@ -12,7 +13,7 @@ import (
 )
 
 func TestSnapshotAndPrune(t *testing.T) {
-	v, err := Open(t.TempDir())
+	v, err := Open(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +320,7 @@ func TestPruneWaitsForReads(t *testing.T) {
 
 func open(t *testing.T) *Vault {
 	t.Helper()
-	v, err := Open(t.TempDir())
+	v, err := Open(t.TempDir(), nil)
 	must(t, err)
 	return v
 }
@@ -361,7 +362,7 @@ func must(t *testing.T, err error) {
 }
 
 func TestSnapshotTreeSkipsSymlinks(t *testing.T) {
-	v, err := Open(t.TempDir())
+	v, err := Open(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +389,7 @@ func TestSnapshotTreeSkipsSymlinks(t *testing.T) {
 }
 
 func TestQuarantine(t *testing.T) {
-	v, err := Open(t.TempDir())
+	v, err := Open(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +403,7 @@ func TestQuarantine(t *testing.T) {
 }
 
 func TestQuarantineNameStaysInQuarantine(t *testing.T) {
-	v, err := Open(t.TempDir())
+	v, err := Open(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,4 +428,221 @@ func TestQuarantineNameStaysInQuarantine(t *testing.T) {
 	if a == b {
 		t.Fatal("two quarantines shared a directory")
 	}
+}
+
+// --- at-rest encryption ---
+
+// openAt opens an existing root in plaintext mode.
+func openAt(t *testing.T, root string) *Vault {
+	t.Helper()
+	v, err := Open(root, nil)
+	must(t, err)
+	return v
+}
+
+// testKeyFor derives the key a passphrase produces for root's keycheck.
+func testKeyFor(t *testing.T, root, pass string) []byte {
+	t.Helper()
+	key, err := keycheckKey(root, pass)
+	must(t, err)
+	return key
+}
+
+// needleScan fails if any regular file under root holds a needle in the
+// clear: no user content, path, or reason may survive on disk unsealed.
+func needleScan(t *testing.T, root string, needles []string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		for _, needle := range needles {
+			if bytes.Contains(raw, []byte(needle)) {
+				t.Fatalf("%s holds %q in the clear", p, needle)
+			}
+		}
+		return nil
+	})
+	must(t, err)
+}
+
+func TestVaultEncryptExistingVersions(t *testing.T) {
+	root := t.TempDir()
+	v := openAt(t, root)
+	snap(t, v, "notes/a.md", "plainsight", "pre-overwrite")
+	pkg := filepath.Join(t.TempDir(), "Talk.key")
+	write(t, filepath.Join(pkg, "Data", "img.png"), "pngdata")
+	write(t, filepath.Join(pkg, "Index.zip"), "indexdata")
+	if _, err := v.SnapshotTree("lib", "Talk.key", os.DirFS(pkg), "tree-hash", "pre-delete"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := v.Quarantine("bad.md", []byte("quarnope"), "hash mismatch"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, v.EnableEncryption("correct horse"))
+	if !IsEncrypted(root) {
+		t.Fatal("the vault is not marked encrypted")
+	}
+	needleScan(t, root, []string{"plainsight", "pngdata", "indexdata", "quarnope", "notes/a.md", "pre-overwrite", "hash mismatch"})
+
+	key := testKeyFor(t, root, "correct horse")
+	v2, err := Open(root, key)
+	must(t, err)
+	if got := contents(t, v2, "notes/a.md"); !slices.Equal(got, []string{"plainsight"}) {
+		t.Fatalf("after enabling, a.md keeps %q", got)
+	}
+	vs, err := v2.Versions("lib", "notes/a.md")
+	must(t, err)
+	if len(vs) != 1 || vs[0].Size != int64(len("plainsight")) {
+		t.Fatalf("size = %+v, want the plaintext size %d", vs, len("plainsight"))
+	}
+	pkgVers, err := v2.Versions("lib", "Talk.key")
+	must(t, err)
+	if len(pkgVers) != 1 {
+		t.Fatalf("the package version is missing: %v", pkgVers)
+	}
+	must(t, v2.Read("lib", "Talk.key", pkgVers[0].ID, func(_ Version, content string) error {
+		img, err := os.ReadFile(filepath.Join(content, "Data", "img.png"))
+		if err != nil || string(img) != "pngdata" {
+			t.Fatalf("package img.png holds %q (%v)", img, err)
+		}
+		idx, err := os.ReadFile(filepath.Join(content, "Index.zip"))
+		if err != nil || string(idx) != "indexdata" {
+			t.Fatalf("package Index.zip holds %q (%v)", idx, err)
+		}
+		return nil
+	}))
+	// The wrong key opens nothing: a key that can't open the keycheck.
+	wrong := deriveKey("wrong horse", make([]byte, saltBytes))
+	if _, err := Open(root, wrong); !errors.Is(err, ErrVaultLocked) {
+		t.Fatalf("a wrong key gave %v, want ErrVaultLocked", err)
+	}
+	if _, err := Open(root, nil); !errors.Is(err, ErrVaultLocked) {
+		t.Fatalf("no key gave %v, want ErrVaultLocked", err)
+	}
+	// Decrypting restores a plain vault with the same content.
+	must(t, v2.DisableEncryption("correct horse"))
+	if IsEncrypted(root) {
+		t.Fatal("the vault is still marked encrypted")
+	}
+	v3, err := Open(root, nil)
+	must(t, err)
+	if got := contents(t, v3, "notes/a.md"); !slices.Equal(got, []string{"plainsight"}) {
+		t.Fatalf("after disabling, a.md keeps %q", got)
+	}
+	needleScan(t, root, nil) // no needle can fail; every file must be plain
+	raw, err := os.ReadFile(filepath.Join(v3.PathDir("lib", "notes/a.md"), contents2ID(t, v3, "notes/a.md"), "content"))
+	must(t, err)
+	if !bytes.Contains(raw, []byte("plainsight")) {
+		t.Fatal("after disabling, the content is not plaintext on disk")
+	}
+}
+
+// contents2ID is the newest version ID of rel.
+func contents2ID(t *testing.T, v *Vault, rel string) string {
+	t.Helper()
+	vs, err := v.Versions("lib", rel)
+	must(t, err)
+	if len(vs) == 0 {
+		t.Fatal("no versions")
+	}
+	return vs[0].ID
+}
+
+func TestEncryptedVaultSnapshotStaysSealed(t *testing.T) {
+	root := t.TempDir()
+	v := openAt(t, root)
+	must(t, v.EnableEncryption("pw"))
+	snap(t, v, "later.md", "newlynsighted", "pre-overwrite")
+	needleScan(t, root, []string{"newlynsighted", "later.md", "pre-overwrite"})
+	if got := contents(t, v, "later.md"); !slices.Equal(got, []string{"newlynsighted"}) {
+		t.Fatalf("a snapshot taken after enabling keeps %q", got)
+	}
+	vs, err := v.Versions("lib", "later.md")
+	must(t, err)
+	if len(vs) != 1 || vs[0].Size != int64(len("newlynsighted")) {
+		t.Fatalf("size = %+v, want %d", vs, len("newlynsighted"))
+	}
+	// The plaintext handed to readers must not outlive the read.
+	ents, err := os.ReadDir(filepath.Join(root, "plain"))
+	must(t, err)
+	if len(ents) != 0 {
+		t.Fatalf("plaintext temp files were left behind: %d entries", len(ents))
+	}
+}
+
+func TestEncryptedVaultPrune(t *testing.T) {
+	root := t.TempDir()
+	v := openAt(t, root)
+	v.Keep = 2
+	must(t, v.EnableEncryption("pw"))
+	for i, word := range []string{"x-old-one", "x-old-two", "x-old-three", "x-newest"} {
+		_ = i
+		snap(t, v, "a.md", word, "test")
+	}
+	ents, err := os.ReadDir(v.PathDir("lib", "a.md"))
+	must(t, err)
+	if len(ents) != 2 {
+		t.Fatalf("keep 2, got %d", len(ents))
+	}
+	if got := contents(t, v, "a.md"); !slices.Equal(got, []string{"x-newest", "x-old-three"}) {
+		t.Fatalf("a.md keeps %q", got)
+	}
+	needleScan(t, root, []string{"x-old-one", "x-old-two", "x-old-three", "x-newest"})
+}
+
+// A migration that died halfway leaves some files sealed and some plain;
+// everything must still open and read.
+func TestMixedStateReadable(t *testing.T) {
+	root := t.TempDir()
+	v := openAt(t, root)
+	snap(t, v, "notes/a.md", "before-enabling", "pre-overwrite")
+	must(t, v.EnableEncryption("pw"))
+	// Hand-write a plaintext version the way an interrupted migration
+	// would have left one.
+	snap(t, v, "plain.md", "still-plain", "pre-overwrite")
+	pathDir := v.PathDir("lib", "plain.md")
+	// Unseal that version's files to simulate the interruption.
+	ids, err := os.ReadDir(pathDir)
+	must(t, err)
+	for _, id := range ids {
+		dir := filepath.Join(pathDir, id.Name())
+		raw, err := os.ReadFile(filepath.Join(dir, "content"))
+		must(t, err)
+		plain, err := openBytes(testKeyFor(t, root, "pw"), raw)
+		must(t, err)
+		must(t, os.WriteFile(filepath.Join(dir, "content"), plain, 0o600))
+		raw, err = os.ReadFile(filepath.Join(dir, "meta.json"))
+		must(t, err)
+		plain, err = openBytes(testKeyFor(t, root, "pw"), raw)
+		must(t, err)
+		must(t, os.WriteFile(filepath.Join(dir, "meta.json"), plain, 0o600))
+	}
+	v2, err := Open(root, testKeyFor(t, root, "pw"))
+	must(t, err)
+	if got := contents(t, v2, "notes/a.md"); !slices.Equal(got, []string{"before-enabling"}) {
+		t.Fatalf("the sealed version is unreadable: %q", got)
+	}
+	if got := contents(t, v2, "plain.md"); !slices.Equal(got, []string{"still-plain"}) {
+		t.Fatalf("the plain version is unreadable: %q", got)
+	}
+}
+
+func TestEncryptedQuarantineLabelHidesName(t *testing.T) {
+	v := open(t)
+	must(t, v.EnableEncryption("pw"))
+	dir, err := v.Quarantine("Secret Contract.pdf", []byte("payloadd"), "hash mismatch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Base(dir)
+	if strings.Contains(base, "ecret") || strings.Contains(base, "ontract") {
+		t.Fatalf("the quarantine label %q leaks the file name", base)
+	}
+	needleScan(t, v.Root, []string{"payloadd", "Secret Contract.pdf"})
+	// The note may say why the file was quarantined; the name may not.
 }

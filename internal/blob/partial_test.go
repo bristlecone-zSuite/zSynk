@@ -212,7 +212,7 @@ func TestSweepRemovesStalePartials(t *testing.T) {
 // was writing into tmp.
 func TestNewKeepsPartials(t *testing.T) {
 	root := t.TempDir()
-	s, err := New(root)
+	s, err := New(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,10 +227,10 @@ func TestNewKeepsPartials(t *testing.T) {
 	if err := p.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(root); err != nil {
+	if _, err := New(root, nil); err != nil {
 		t.Fatal(err)
 	}
-	s2, err := New(root)
+	s2, err := New(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

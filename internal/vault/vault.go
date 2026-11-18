@@ -68,6 +68,10 @@ type Vault struct {
 	// mu keeps Prune from removing a version that's being read, and from
 	// removing a directory a snapshot is about to use.
 	mu sync.Mutex
+
+	// key is the at-rest key; nil for a plaintext vault. It comes from the
+	// passphrase through Argon2id and never leaves the process.
+	key []byte
 }
 
 // Version is a copy the vault keeps of a file or package, as it was before
@@ -87,8 +91,15 @@ type Version struct {
 	Size int64 `json:"size"`
 }
 
-func Open(root string) (*Vault, error) {
-	v := &Vault{Root: root, Keep: keepDefault, MaxAge: maxAgeDefault, MaxBytes: maxBytesDefault}
+// Open opens the vault at root. A key of nil opens a plaintext vault; a
+// vault that was encrypted needs the key its keycheck seals for, and
+// refuses anything else with ErrVaultLocked.
+func Open(root string, key []byte) (*Vault, error) {
+	key, err := vaultKeyFor(root, key)
+	if err != nil {
+		return nil, err
+	}
+	v := &Vault{Root: root, Keep: keepDefault, MaxAge: maxAgeDefault, MaxBytes: maxBytesDefault, key: key}
 	if err := os.MkdirAll(filepath.Join(root, "versions"), 0o700); err != nil {
 		return nil, err
 	}
@@ -144,6 +155,9 @@ func (v *Vault) snapshot(folderID, rel, hash string, kind packages.Kind, reason 
 	if err := writeMeta(tmp, meta); err != nil {
 		return nil, err
 	}
+	if err := v.sealDir(tmp); err != nil {
+		return nil, err
+	}
 	if err := os.Rename(tmp, final); err != nil {
 		return nil, err
 	}
@@ -167,7 +181,7 @@ func (v *Vault) mkTemp(parent string) (string, error) {
 func (v *Vault) Versions(folderID, rel string) ([]Version, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	vs, err := versionsIn(v.PathDir(folderID, rel))
+	vs, err := versionsIn(v.PathDir(folderID, rel), v.key)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +201,7 @@ func (v *Vault) List(folderID string) ([]Version, error) {
 	}
 	out := []Version{}
 	for _, d := range dirs {
-		vs, err := versionsIn(d)
+		vs, err := versionsIn(d, v.key)
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +212,8 @@ func (v *Vault) List(folderID string) ([]Version, error) {
 }
 
 // Read calls read with version id of rel and where its content is: a file,
-// or a directory for a package. The version stays until read returns.
+// or a directory for a package. The version stays until read returns. An
+// encrypted vault hands the reader plaintext, and wipes it afterwards.
 func (v *Vault) Read(folderID, rel, id string, read func(ver Version, content string) error) error {
 	if !versionID(id) {
 		return fmt.Errorf("%w: %q", ErrNoVersion, id)
@@ -206,26 +221,48 @@ func (v *Vault) Read(folderID, rel, id string, read func(ver Version, content st
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	dir := filepath.Join(v.PathDir(folderID, rel), id)
-	ver, err := readVersion(dir)
+	ver, err := readVersion(dir, v.key)
 	if errors.Is(err, fs.ErrNotExist) || err == nil && ver.Path != rel {
 		return fmt.Errorf("%w: %s of %s", ErrNoVersion, id, rel)
 	}
 	if err != nil {
 		return err
 	}
-	return read(ver, filepath.Join(dir, "content"))
+	content := filepath.Join(dir, "content")
+	if v.key == nil {
+		return read(ver, content)
+	}
+	plainRoot := filepath.Join(v.Root, "plain")
+	if err := os.MkdirAll(plainRoot, 0o700); err != nil {
+		return err
+	}
+	tmpd, err := os.MkdirTemp(plainRoot, "read-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpd)
+	plainPath := filepath.Join(tmpd, "content")
+	if err := decryptContent(v.key, content, plainPath); err != nil {
+		return err
+	}
+	return read(ver, plainPath)
 }
 
-func readVersion(dir string) (Version, error) {
+func readVersion(dir string, key []byte) (Version, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "meta.json"))
 	if err != nil {
 		return Version{}, err
+	}
+	if key != nil && isSealed(raw) {
+		if raw, err = openBytes(key, raw); err != nil {
+			return Version{}, err
+		}
 	}
 	var m EntryMeta
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return Version{}, err
 	}
-	size, err := sizeOf(filepath.Join(dir, "content"))
+	size, err := plainSizeOf(filepath.Join(dir, "content"))
 	if err != nil {
 		return Version{}, err
 	}
@@ -234,14 +271,14 @@ func readVersion(dir string) (Version, error) {
 
 // versionsIn reads the versions in a path's directory, leaving out any
 // that can't be read.
-func versionsIn(dir string) ([]Version, error) {
+func versionsIn(dir string, key []byte) ([]Version, error) {
 	names, err := versionNames(dir)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Version, 0, len(names))
 	for _, name := range names {
-		if ver, err := readVersion(filepath.Join(dir, name)); err == nil {
+		if ver, err := readVersion(filepath.Join(dir, name), key); err == nil {
 			out = append(out, ver)
 		}
 	}
@@ -427,7 +464,7 @@ func (v *Vault) doomed(now time.Time) ([]victim, error) {
 					leftover(dir, info, true)
 				case e.IsDir() && versionID(e.Name()):
 					at, _ := stampOf(e.Name())
-					size, err := sizeOf(filepath.Join(dir, "content"))
+					size, err := plainSizeOf(filepath.Join(dir, "content"))
 					errs = append(errs, err)
 					versions = append(versions, kept{victim{dir, size, true}, 1, at})
 				}
@@ -466,13 +503,34 @@ func (v *Vault) doomed(now time.Time) ([]victim, error) {
 		if !ok {
 			at = info.ModTime()
 		}
-		size, err := sizeOf(dir)
+		size, err := plainSizeOf(dir)
 		errs = append(errs, err)
 		if now.Sub(at) > maxAge {
 			out = append(out, victim{dir, size, true})
 		} else {
 			candidates = append(candidates, kept{victim{dir, size, true}, 0, at})
 		}
+	}
+
+	// Plaintext handed to readers never outlives the read, but a crash
+	// mid-read leaves a temp behind; sweep it like other leftovers.
+	plainRoot := filepath.Join(v.Root, "plain")
+	if ents, err := os.ReadDir(plainRoot); err == nil {
+		for _, e := range ents {
+			dir := filepath.Join(plainRoot, e.Name())
+			info, err := e.Info()
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if now.Sub(info.ModTime()) > tmpGrace {
+				size, err := sizeOf(dir)
+				errs = append(errs, err)
+				out = append(out, victim{dir, size, false})
+			}
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		errs = append(errs, err)
 	}
 
 	var total int64
@@ -520,17 +578,30 @@ func (v *Vault) Quarantine(name string, data []byte, note string) (string, error
 	if err := os.MkdirAll(parent, 0o700); err != nil {
 		return "", err
 	}
-	dir, err := os.MkdirTemp(parent, stamp+"-"+quarantineLabel(name)+"-")
+	label := quarantineLabel(name)
+	if v.key != nil {
+		// The name may name user content; don't put it on disk.
+		label = "quarantined"
+	}
+	dir, err := os.MkdirTemp(parent, stamp+"-"+label+"-")
 	if err != nil {
 		return "", err
 	}
-	if err := atomicfile.WriteFile(filepath.Join(dir, "payload"), data, 0o600); err != nil {
+	if err := v.writeSecret(filepath.Join(dir, "payload"), data); err != nil {
 		return "", err
 	}
-	if err := atomicfile.WriteFile(filepath.Join(dir, "note.txt"), []byte(note), 0o600); err != nil {
+	if err := v.writeSecret(filepath.Join(dir, "note.txt"), []byte(note)); err != nil {
 		return "", err
 	}
 	return dir, nil
+}
+
+// writeSecret writes bytes into the vault, sealed when the vault is.
+func (v *Vault) writeSecret(path string, data []byte) error {
+	if v.key != nil {
+		data, _ = sealBytes(v.key, data)
+	}
+	return atomicfile.WriteFile(path, data, 0o600)
 }
 
 func quarantineLabel(name string) string {

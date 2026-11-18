@@ -1,6 +1,7 @@
 package blob
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -23,17 +24,33 @@ var ErrInvalidHash = errors.New("blob: hash must be 64 lowercase hex characters"
 // Store is a content-addressed object store. Objects are immutable.
 type Store struct {
 	Root string
+	// seal seals blobs at rest; nil keeps plaintext.
+	seal Sealer
+}
+
+// Sealer seals blob content at rest. The store verifies the plaintext
+// hash on the way out either way. Implementations must treat the bytes
+// between seal and open as confidential; the hash stays the plaintext
+// hash, so content stays addressable.
+type Sealer interface {
+	// SealReader writes r's plaintext to dest as a sealed envelope.
+	SealReader(r io.Reader, dest string) (int64, error)
+	// OpenSealed lays dest's plaintext out at out.
+	OpenSealed(dest, out string) error
+	// IsSealed says whether dest holds a sealed envelope.
+	IsSealed(dest string) bool
 }
 
 // New opens the store at root. Content still on its way into the store
 // when a process last stopped is discarded, so only one Store may use a
 // root at a time. What interrupted transfers staged under partial/ is
-// kept, for the next transfer to continue.
-func New(root string) (*Store, error) {
+// kept, for the next transfer to continue. A non-nil sealer seals every
+// blob it writes; blobs already on disk are opened either way.
+func New(root string, sealer Sealer) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(root, "objects"), 0o700); err != nil {
 		return nil, err
 	}
-	s := &Store{Root: root}
+	s := &Store{Root: root, seal: sealer}
 	if err := os.RemoveAll(s.tmpDir()); err != nil {
 		return nil, err
 	}
@@ -88,16 +105,73 @@ func (s *Store) Put(data []byte) (string, error) {
 	if _, err := os.Stat(p); err == nil {
 		return hash, nil
 	}
-	if err := atomicfile.WriteFile(p, data, 0o600); err != nil {
+	if s.seal == nil {
+		if err := atomicfile.WriteFile(p, data, 0o600); err != nil {
+			return "", err
+		}
+		return hash, nil
+	}
+	tmp, err := os.CreateTemp(s.tmpDir(), "put-*")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := s.seal.SealReader(bytes.NewReader(data), tmp.Name()); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	if err := s.sealFile(hash, tmp.Name()); err != nil {
 		return "", err
 	}
 	return hash, nil
+}
+
+// sealFile moves a freshly written tmp file into place under hash. It
+// exists so Put and PutReader share the rename and directory bookkeeping.
+func (s *Store) sealFile(hash, tmp string) error {
+	p, err := s.pathFor(hash)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, p); err != nil {
+		return err
+	}
+	syncDir(filepath.Dir(p))
+	return nil
 }
 
 func (s *Store) Get(hash string) ([]byte, error) {
 	p, err := s.pathFor(hash)
 	if err != nil {
 		return nil, err
+	}
+	if s.seal != nil && s.seal.IsSealed(p) {
+		tmp, err := os.CreateTemp(s.tmpDir(), "get-*")
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(tmp.Name())
+		if err := s.seal.OpenSealed(p, tmp.Name()); err != nil {
+			tmp.Close()
+			return nil, fmt.Errorf("%w: opening sealed blob: %v", ErrCorrupt, err)
+		}
+		if err := tmp.Close(); err != nil {
+			return nil, err
+		}
+		b, err := os.ReadFile(tmp.Name())
+		if err != nil {
+			return nil, err
+		}
+		if got := atomicfile.HashBytes(b); got != hash {
+			return nil, fmt.Errorf("%w: expected %s got %s", ErrCorrupt, hash, got)
+		}
+		return b, nil
 	}
 	b, err := os.ReadFile(p)
 	if err != nil {
@@ -114,11 +188,42 @@ func (s *Store) Get(hash string) ([]byte, error) {
 }
 
 // Open streams a blob. The reader fails with ErrCorrupt at EOF if the
-// content on disk doesn't match the hash.
+// content on disk doesn't match the hash. A sealed blob is decrypted to
+// a temporary file first and verified as plaintext.
 func (s *Store) Open(hash string) (io.ReadCloser, int64, error) {
 	p, err := s.pathFor(hash)
 	if err != nil {
 		return nil, 0, err
+	}
+	if s.seal != nil && s.seal.IsSealed(p) {
+		tmp, err := os.CreateTemp(s.tmpDir(), "open-*")
+		if err != nil {
+			return nil, 0, err
+		}
+		clean := func() {
+			tmp.Close()
+			os.Remove(tmp.Name())
+		}
+		if err := s.seal.OpenSealed(p, tmp.Name()); err != nil {
+			clean()
+			return nil, 0, fmt.Errorf("%w: opening sealed blob: %v", ErrCorrupt, err)
+		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmp.Name())
+			return nil, 0, err
+		}
+		f, err := os.Open(tmp.Name())
+		if err != nil {
+			os.Remove(tmp.Name())
+			return nil, 0, err
+		}
+		st, err := f.Stat()
+		if err != nil {
+			f.Close()
+			os.Remove(tmp.Name())
+			return nil, 0, err
+		}
+		return sealedFile{Reader: Verify(f, hash, st.Size()), f: f, tmp: tmp.Name()}, st.Size(), nil
 	}
 	f, err := os.Open(p)
 	if err != nil {
@@ -133,6 +238,20 @@ func (s *Store) Open(hash string) (io.ReadCloser, int64, error) {
 		return nil, 0, err
 	}
 	return verifiedFile{Reader: Verify(f, hash, st.Size()), f: f}, st.Size(), nil
+}
+
+// sealedFile is like verifiedFile but removes the decrypted temporary
+// file when the reader is closed, so plaintext never lingers on disk.
+type sealedFile struct {
+	io.Reader
+	f   *os.File
+	tmp string
+}
+
+func (v sealedFile) Close() error {
+	err := v.f.Close()
+	os.Remove(v.tmp)
+	return err
 }
 
 type verifiedFile struct {
@@ -204,6 +323,39 @@ func (s *Store) PutReader(r io.Reader) (string, int64, error) {
 	}
 	if err := tmp.Close(); err != nil {
 		return "", 0, err
+	}
+	// With a sealer the plaintext tmp becomes a sealed envelope in a
+	// second tmp file; the plaintext copy never leaves tmp/.
+	if s.seal != nil {
+		sealed, err := os.CreateTemp(s.tmpDir(), "put-*")
+		if err != nil {
+			return "", 0, err
+		}
+		in, err := os.Open(tmp.Name())
+		if err != nil {
+			sealed.Close()
+			os.Remove(sealed.Name())
+			return "", 0, err
+		}
+		_, err = s.seal.SealReader(in, sealed.Name())
+		closeErr := in.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err == nil {
+			err = sealed.Close()
+		}
+		if err != nil {
+			os.Remove(sealed.Name())
+			return "", 0, err
+		}
+		os.Remove(tmp.Name())
+		if err := s.sealFile(hash, sealed.Name()); err != nil {
+			os.Remove(sealed.Name())
+			return "", 0, err
+		}
+		stored = true
+		return hash, n, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return "", 0, err
@@ -300,6 +452,116 @@ func (s *Store) Remove(hash string) error {
 		return err
 	}
 	return nil
+}
+
+// SetSealer switches the store's at-rest sealing. It is for the engine's
+// enable and disable paths, which re-seal or unseal every blob in the
+// same breath; readers keep whatever sealer was set when they started,
+// and blobs already on disk open either way.
+func (s *Store) SetSealer(se Sealer) { s.seal = se }
+
+// SealAtRest seals every stored blob that is still plaintext. It returns
+// the number of blobs it sealed. Interrupting it at any point is safe:
+// each blob is replaced atomically and an unsealed remainder is picked
+// up by the next call.
+func (s *Store) SealAtRest() (int, error) {
+	if s.seal == nil {
+		return 0, errors.New("blob: SealAtRest with no sealer set")
+	}
+	sealed := 0
+	err := s.walkObjects(func(p string) error {
+		if s.seal.IsSealed(p) {
+			return nil
+		}
+		tmp, err := os.CreateTemp(s.tmpDir(), "seal-*")
+		if err != nil {
+			return err
+		}
+		clean := func() {
+			tmp.Close()
+			os.Remove(tmp.Name())
+		}
+		in, err := os.Open(p)
+		if err != nil {
+			clean()
+			return err
+		}
+		_, err = s.seal.SealReader(in, tmp.Name())
+		closeErr := in.Close()
+		if err == nil {
+			err = closeErr
+		}
+		if err == nil {
+			err = tmp.Close()
+		}
+		if err != nil {
+			clean()
+			return err
+		}
+		if err := os.Rename(tmp.Name(), p); err != nil {
+			os.Remove(tmp.Name())
+			return err
+		}
+		sealed++
+		return nil
+	})
+	if err == nil {
+		syncDir(filepath.Join(s.Root, "objects"))
+	}
+	return sealed, err
+}
+
+// UnsealAtRest decrypts every sealed blob back to plaintext, for turning
+// vault encryption off. Like SealAtRest it is safe to interrupt; sealed
+// leftovers are finished by the next call.
+func (s *Store) UnsealAtRest() (int, error) {
+	if s.seal == nil {
+		return 0, errors.New("blob: UnsealAtRest with no sealer set")
+	}
+	unsealed := 0
+	err := s.walkObjects(func(p string) error {
+		if !s.seal.IsSealed(p) {
+			return nil
+		}
+		tmp, err := os.CreateTemp(s.tmpDir(), "unseal-*")
+		if err != nil {
+			return err
+		}
+		if err := s.seal.OpenSealed(p, tmp.Name()); err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			return fmt.Errorf("%w: unsealing %s: %v", ErrCorrupt, filepath.Base(p), err)
+		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmp.Name())
+			return err
+		}
+		if err := os.Rename(tmp.Name(), p); err != nil {
+			os.Remove(tmp.Name())
+			return err
+		}
+		unsealed++
+		return nil
+	})
+	if err == nil {
+		syncDir(filepath.Join(s.Root, "objects"))
+	}
+	return unsealed, err
+}
+
+func (s *Store) walkObjects(visit func(p string) error) error {
+	return filepath.WalkDir(filepath.Join(s.Root, "objects"), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if ValidateHash(d.Name()) != nil {
+			return nil
+		}
+		return visit(p)
+	})
 }
 
 func syncDir(dir string) {

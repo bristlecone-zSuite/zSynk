@@ -15,7 +15,7 @@ import (
 )
 
 func TestPutGet(t *testing.T) {
-	s, err := New(t.TempDir())
+	s, err := New(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestPutGet(t *testing.T) {
 }
 
 func TestCorruptDetected(t *testing.T) {
-	s, err := New(t.TempDir())
+	s, err := New(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestValidateHash(t *testing.T) {
 			t.Errorf("accepted %q", bad)
 		}
 	}
-	s, err := New(t.TempDir())
+	s, err := New(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestValidateHash(t *testing.T) {
 }
 
 func TestDedup(t *testing.T) {
-	s, err := New(t.TempDir())
+	s, err := New(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestPutFile(t *testing.T) {
 
 func TestNewDiscardsUnfinishedContent(t *testing.T) {
 	root := t.TempDir()
-	s, err := New(root)
+	s, err := New(root, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestNewDiscardsUnfinishedContent(t *testing.T) {
 	if err := os.WriteFile(left, []byte("cut off"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(root); err != nil {
+	if _, err := New(root, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(left); err == nil {
@@ -261,7 +261,7 @@ func TestRemove(t *testing.T) {
 
 func newStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := New(t.TempDir())
+	s, err := New(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
