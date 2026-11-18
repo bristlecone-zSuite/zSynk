@@ -86,8 +86,10 @@ release: build
 # The iOS framework is generated from the mobile package with gomobile.
 # The x/mobile version comes from go.mod so the framework matches the
 # module that builds the rest of Synk. The framework is a build product:
-# it is git-ignored and every build regenerates it.
-XMOBILE := $(shell awk '$$2 == "golang.org/x/mobile" {print $$3}' go.mod)
+# it is git-ignored and every build regenerates it. The version line may
+# sit inside a require block or stand alone; the version is the first
+# v-prefixed token on it.
+XMOBILE := $(shell awk '$$1 == "golang.org/x/mobile" || $$2 == "golang.org/x/mobile" {for (i = 1; i <= NF; i++) if ($$i ~ /^v[0-9]/) {print $$i; exit}}' go.mod)
 
 ios-framework:
 	mkdir -p apps/ios/Frameworks bin
