@@ -39,8 +39,9 @@ Synk is pre-release. The engine passes its test suite, including reproductions o
 | `synk` CLI and loopback API | Present; the API needs a bearer token and rejects browsers |
 | Kept versions and restore | Present (`synk versions`, `synk restore`) |
 | macOS SwiftUI app | Built and tested in CI against two real daemons; release signing machinery ready |
-| iOS SwiftUI app | Builds for the simulator with the engine embedded; pairing and libraries tested there; File Provider extension next |
-| Optional NAT relay | Cloudflare Worker in `relay/` deploys; the daemon has no relay client yet |
+| iOS SwiftUI app | Builds for the simulator with the engine embedded; pairing, libraries, camera QR pairing and the read-only File Provider extension tested there |
+| Optional NAT relay | Self-hostable `synk-relay` binary with a Go client in the daemon (`synk relay wss://HOST` sets it); a Cloudflare Worker in `relay/worker` is the optional hosted convenience |
+| iOS background sync | Best effort: a flush when the app is backgrounded, then BGTaskScheduler refresh/processing tasks at the system's discretion; no push notifications, which would require a service of ours ([decision 0014](docs/decisions/0014-ios-background-sync-is-opportunistic.md)) |
 
 What comes next is in [ROADMAP.md](ROADMAP.md), and where the work stands is in [STATUS.md](STATUS.md).
 
@@ -67,6 +68,21 @@ export SYNK_DIR=/tmp/synk-b
 ```
 
 The Mac and iOS apps talk to the same daemon over `http://127.0.0.1:7421` (loopback only).
+
+## Using the relay
+
+When two devices have no working direct connection (NAT, different networks),
+run your own relay from this repository and point both devices at it:
+
+```bash
+make build && ./bin/synk-relay -addr :7430 -cert CERT.pem -key KEY.pem
+# on each device:
+./bin/synk relay wss://relay.example.com
+```
+
+The relay forwards encrypted traffic only: it sees room names, never keys or
+files. `synk relay` with no argument shows what is set; `synk relay clear`
+removes it. See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire protocol.
 
 ## Safety rules (non-negotiable)
 
