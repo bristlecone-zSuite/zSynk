@@ -89,6 +89,14 @@ targets:
       # from the mobile package by gomobile; see decision 0009.
       - framework: apps/ios/Frameworks/SynkCore.xcframework
         embed: true
+      # The File Provider extension (decision 0011): Files → On My iPhone
+      # → Synk shows the synced libraries. An app-extension dependency on
+      # an application target is embedded by default (XcodeGen has no
+      # top-level `embed:` key — an earlier attempt used one and XcodeGen
+      # ignored it, so the extension was silently missing from the app).
+      - target: SynkFileProvider
+    entitlements:
+      path: apps/ios/Synk/Synk.entitlements
     # An explicit Info.plist, not INFOPLIST_KEY_ settings: Xcode's
     # generated-plist keys silently drop the ones they don't know
     # (UIFileSharingEnabled vanished that way), and these two keys are
@@ -103,11 +111,37 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         NSLocalNetworkUsageDescription: "Synk syncs your documents directly with your Mac over your local network."
+        NSCameraUsageDescription: "Synk uses the camera to read the pairing QR code your Mac shows."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zyniker.synk
         PRODUCT_MODULE_NAME: Synk
         TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        SWIFT_VERSION: "5.10"
+        ENABLE_DEBUG_DYLIB: NO
+  SynkFileProvider:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: apps/ios-fileprovider
+      - path: apps/shared
+    # The extension is a read-only view of the app group container
+    # (decision 0011); it never runs the engine.
+    entitlements:
+      path: apps/ios-fileprovider/SynkFileProvider.entitlements
+    info:
+      path: apps/ios-fileprovider/Info.plist
+      properties:
+        CFBundleDisplayName: Synk File Provider
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.fileprovider-nonui
+          NSExtensionPrincipalClass: SynkFileProvider.FileProviderManager
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zyniker.synk.fileprovider
+        # Match the app: without it xcodegen defaults the target to the
+        # newest SDK, which no installed simulator may satisfy.
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
         SWIFT_VERSION: "5.10"
         ENABLE_DEBUG_DYLIB: NO

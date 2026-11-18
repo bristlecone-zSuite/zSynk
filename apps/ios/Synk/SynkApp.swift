@@ -1,6 +1,9 @@
 import SwiftUI
 import SynkCore
 import UIKit
+import Vision
+import VisionKit
+import FileProvider
 
 // The iOS app embeds the engine through the mobile package's generated
 // framework: there is no separate daemon on the phone, so the model owns
@@ -8,11 +11,12 @@ import UIKit
 // the bridge as JSON shaped like the REST API's, decoded with the shared
 // Codable types.
 //
-// Libraries live in the app's Documents folder, one per app preset, so
-// Files shows them under On My iPhone → Synk and the apps that read
-// those formats can open the files in place (decision 0010). The phone
-// cannot pick folders outside its sandbox; the File Provider extension
-// is the later, broader answer.
+// Libraries live in the app group container's Documents folder, one per
+// app preset, and the File Provider extension shows them in Files under
+// On My iPhone → Synk (decision 0011). When the app group is
+// unavailable (the entitlement is missing on the device), the app falls
+// back to its own Documents folder and the old Files exposure keeps
+// working. The phone cannot pick folders outside its sandbox.
 
 @main
 struct SynkApp: App {
@@ -57,6 +61,12 @@ struct RootView: View {
                 PairSection()
                 if let error = model.error {
                     Section("Problems") {
+                        Label(error, systemImage: "exclamationmark.octagon")
+                            .foregroundStyle(.red)
+                    }
+                }
+                if let error = model.fileProviderError {
+                    Section("Files") {
                         Label(error, systemImage: "exclamationmark.octagon")
                             .foregroundStyle(.red)
                     }
@@ -120,8 +130,9 @@ struct LibrariesSection: View {
 }
 
 /// The catalog presets that work on this device. Adding one creates its
-/// folder in the app's Documents and starts syncing it — on iOS the user
-/// picks the app, not a folder; the sandbox decides where files live.
+/// folder in the app group container's Documents and starts syncing it —
+/// on iOS the user picks the app, not a folder; the sandbox decides
+/// where files live.
 struct AddLibrarySection: View {
     @EnvironmentObject var model: SynkModel
 
@@ -156,12 +167,14 @@ struct AddLibrarySection: View {
 struct PairSection: View {
     @EnvironmentObject var model: SynkModel
     @State private var link = ""
+    @State private var scanning = false
 
     var body: some View {
         Section("Pair with a Mac") {
             TextField("synk://pair?…", text: $link)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
+            Button("Scan QR") { scanning = true }
             Button("Paste link") {
                 if let text = UIPasteboard.general.string { link = text }
             }
@@ -175,6 +188,48 @@ struct PairSection: View {
                 Text(message).font(.caption).foregroundStyle(.secondary)
             }
         }
+        .sheet(isPresented: $scanning) {
+            QRScannerView { scanned in
+                scanning = false
+                Task { await model.pairWithLink(scanned) }
+            }
+        }
+    }
+}
+
+/// Wraps DataScannerViewController (iOS 16+) — the system's QR scanner,
+/// so there is no camera plumbing to get wrong. The scanned string is
+/// the same synk://pair link the user can paste.
+struct QRScannerView: UIViewControllerRepresentable {
+    let onScan: (String) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onScan: onScan) }
+
+    func makeUIViewController(context: Context) -> DataScannerViewController {
+        let controller = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])])
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {}
+
+    final class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        private let onScan: (String) -> Void
+
+        init(onScan: @escaping (String) -> Void) {
+            self.onScan = onScan
+        }
+
+        func dataScanner(_ controller: DataScannerViewController,
+                         didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+            let strings = addedItems.compactMap { item -> String? in
+                if case .barcode(let barcode) = item { return barcode.payloadStringValue }
+                return nil
+            }
+            guard let link = strings.first(where: { PairLink(link: $0) != nil }) else { return }
+            controller.stopScanning()
+            onScan(link)
+        }
     }
 }
 
@@ -185,15 +240,18 @@ final class SynkModel: ObservableObject {
     @Published private(set) var error: String?
     @Published private(set) var pairMessage: String?
     @Published private(set) var libraryMessage: String?
+    @Published private(set) var fileProviderError: String?
 
     private var engine: MobileSynk?
     private let dir: URL
     private let documents: URL
+    private var fileWatcher: DispatchSourceFileSystemObject?
+    private var watchDebounce: DispatchWorkItem?
 
     init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         dir = support.appendingPathComponent("Synk", isDirectory: true)
-        documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        documents = FileProviderModel.librariesRoot()
     }
 
     /// Opens the embedded node and keeps the status fresh. The engine
@@ -209,6 +267,8 @@ final class SynkModel: ObservableObject {
             }
             await loadCatalog()
             await refresh()
+            registerFileProviderDomain()
+            startWatchingLibraries()
         } catch {
             self.error = String(describing: error)
         }
@@ -221,6 +281,74 @@ final class SynkModel: ObservableObject {
         } catch {
             self.error = String(describing: error)
         }
+        signalFileProviderChanges()
+    }
+
+    // MARK: File Provider (decision 0011)
+
+    /// Registers the Synk domain with the File Provider system. The
+    /// system creates the disk location the domain is replicated into;
+    /// the extension serves its contents from the app group container.
+    /// Called once at startup; re-registering an existing domain just
+    /// updates its display name, and the "disk location already exists"
+    /// error is the expected outcome of that.
+    func registerFileProviderDomain() {
+        let domain = NSFileProviderDomain(identifier: FileProviderModel.domain, displayName: "Synk")
+        NSFileProviderManager.add(domain) { [weak self] error in
+            Task { @MainActor in
+                guard let error else { return }
+                let nsError = error as NSError
+                if nsError.domain == NSCocoaErrorDomain,
+                   nsError.code == 516 { // NSFileWriteFileExistsError: the domain's disk location already exists
+                    return
+                }
+                self?.fileProviderError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Tells the system to pull the latest changes from the extension's
+    /// working-set enumerator, so the Files app's view of On My iPhone
+    /// → Synk stays current. The app signals on every refresh and, while
+    /// it runs, through a file watcher on the libraries folder; the
+    /// extension computes the actual changes by diffing a persisted
+    /// snapshot. iOS does not guarantee background execution, so the
+    /// view is freshest while the app is open or has just been.
+    func signalFileProviderChanges() {
+        NSFileProviderManager.default.signalEnumerator(for: .workingSet) { [weak self] (error: Error?) in
+            Task { @MainActor in
+                if let error {
+                    self?.fileProviderError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// Watches the libraries folder so engine writes reach the Files app
+    /// while the app is running.
+    func startWatchingLibraries() {
+        let root = FileProviderModel.librariesRoot()
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let fd = open(root.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: .all, queue: .global(qos: .utility)
+        )
+        source.setEventHandler { [weak self] in
+            self?.schedulePublish()
+        }
+        source.setCancelHandler { close(fd) }
+        source.activate()
+        fileWatcher = source
+    }
+
+    private func schedulePublish() {
+        let work = DispatchWorkItem { [weak self] in
+            Task { @MainActor in self?.signalFileProviderChanges() }
+        }
+        watchDebounce?.cancel()
+        watchDebounce = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
     /// Loads the catalog and keeps the presets that work on iOS.
@@ -236,9 +364,10 @@ final class SynkModel: ObservableObject {
         }
     }
 
-    /// Adds a preset's library in the app's Documents folder. The folder
-    /// name is the preset's name, so Files shows On My iPhone → Synk →
-    /// Obsidian, and the same app preset syncs with the Mac by ID.
+    /// Adds a preset's library in the app group container's Documents
+    /// folder. The folder name is the preset's name, so Files shows
+    /// On My iPhone → Synk → Obsidian, and the same app preset syncs
+    /// with the Mac by ID.
     func addLibrary(_ preset: Preset) async {
         guard let engine else { return }
         do {

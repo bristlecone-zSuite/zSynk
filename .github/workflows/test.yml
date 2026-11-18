@@ -97,7 +97,7 @@ jobs:
       - name: SwiftLint
         run: |
           brew install swiftlint xcodegen
-          swiftlint lint --strict apps/macos apps/shared apps/tests apps/ios apps/ios-tests
+          swiftlint lint --strict apps/macos apps/shared apps/tests apps/ios apps/ios-fileprovider apps/ios-tests
       # The app tests drive two real daemons, so the engine is built first.
       - name: Build and test the Mac app
         run: make app-test

@@ -10,6 +10,12 @@ set -u
 cd "$(dirname "$0")/.."
 mkdir -p .build
 
+# xcodebuild needs the full Xcode. The Makefile picks DEVELOPER_DIR for
+# plain shells; this script must behave the same when it is run directly.
+if ! xcodebuild -version >/dev/null 2>&1; then
+	export DEVELOPER_DIR=$(ls -d /Applications/Xcode*.app/Contents/Developer 2>/dev/null | head -1)
+fi
+
 SUMMARY="${GITHUB_STEP_SUMMARY:-}"
 
 note() {
@@ -70,7 +76,11 @@ fi
 if [ -z "$UDID" ]; then
 	note "### no iOS simulator is available"
 	note '```'
-	xcrun simctl list devices available 2>&1 | head -40 >> "$SUMMARY" 2>/dev/null || xcrun simctl list devices available 2>&1 | head -40
+	if [ -n "$SUMMARY" ]; then
+		xcrun simctl list devices available 2>&1 | head -40 >> "$SUMMARY" || true
+	else
+		xcrun simctl list devices available 2>&1 | head -40
+	fi
 	note '```'
 	exit 1
 fi
@@ -79,7 +89,7 @@ note "### tests on iOS simulator $UDID (was booted before: ${WAS_BOOTED:-no})"
 
 LOG=.build/ios-test-output.log
 xcodebuild -project Synk.xcodeproj -scheme Synk-iOS \
-	-destination "id=$UDID" test CODE_SIGNING_ALLOWED=NO \
+	-destination "id=$UDID" test CODE_SIGN_IDENTITY=- \
 	-derivedDataPath .build/ios > "$LOG" 2>&1
 STATUS=$?
 if [ "$STATUS" -ne 0 ]; then

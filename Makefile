@@ -99,10 +99,13 @@ ios-framework:
 # The iOS app: generate the project and build it for the simulator. Run
 # make ios-framework first (CI does, as its own step so a bind failure
 # shows on its own); this target does not regenerate the framework.
+# Signed ad-hoc, not CODE_SIGNING_ALLOWED=NO: the app group entitlement
+# (decision 0011) only exists once it is embedded in the signature, and
+# the simulator builds need no identity for that.
 ios-build:
 	xcodegen generate
 	xcodebuild -project Synk.xcodeproj -scheme Synk-iOS \
-		-destination 'generic/platform=iOS Simulator' build CODE_SIGNING_ALLOWED=NO \
+		-destination 'generic/platform=iOS Simulator' build CODE_SIGN_IDENTITY=- \
 		-derivedDataPath .build/ios
 
 # The iOS tests run two embedded engines on the iOS runtime — the same

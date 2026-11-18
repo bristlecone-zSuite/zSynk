@@ -22,6 +22,8 @@
 	<string>1</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Synk uses the camera to read the pairing QR code your Mac shows.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Synk syncs your documents directly with your Mac over your local network.</string>
 	<key>UIFileSharingEnabled</key>
