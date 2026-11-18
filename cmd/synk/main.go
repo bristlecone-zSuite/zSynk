@@ -20,6 +20,8 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/term"
+
 	"github.com/bristlecone-zSuite/zSynk/internal/api"
 	"github.com/bristlecone-zSuite/zSynk/internal/apps"
 	"github.com/bristlecone-zSuite/zSynk/internal/config"
@@ -80,6 +82,8 @@ func main() {
 		err = cmdIgnore(args)
 	case "relay":
 		err = cmdRelay(args)
+	case "encrypt":
+		err = cmdEncrypt(args)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -118,6 +122,7 @@ Usage:
   synk restore --library ID --path PATH [--version VERSION]
   synk ignore --library ID [--add PAT]... [--remove PAT]... [--clear]
   synk relay [wss://HOST | clear]
+  synk encrypt [--off] [--passphrase PASS]
 
 Before a sync replaces or deletes a file, Synk keeps a copy: synk versions
 lists them, and synk restore puts one back. synk pause stops a library
@@ -723,6 +728,84 @@ func cmdRelay(args []string) error {
 		return errors.New("relay: give a ws:// or wss:// URL, or clear")
 	}
 	return nil
+}
+
+// cmdEncrypt turns the node's at-rest encryption on or off. With no
+// --passphrase it prompts on the terminal; twice when enabling, so a
+// typo can't lock the vault away.
+func cmdEncrypt(args []string) error {
+	fs := flag.NewFlagSet("encrypt", flag.ExitOnError)
+	off := fs.Bool("off", false, "turn vault encryption off")
+	pass := fs.String("passphrase", "", "passphrase (prompted for when omitted)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("encrypt: unexpected argument %q", fs.Arg(0))
+	}
+
+	t, err := connect("")
+	if err != nil {
+		return err
+	}
+	defer t.close()
+
+	passphrase := strings.TrimSpace(*pass)
+	if passphrase == "" {
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return errors.New("encrypt: a passphrase is required, or a terminal to prompt on")
+		}
+		passphrase, err = promptPassphrase("Passphrase: ")
+		if err != nil {
+			return err
+		}
+		if passphrase == "" {
+			return errors.New("encrypt: a passphrase is required")
+		}
+		if !*off {
+			again, err := promptPassphrase("Again: ")
+			if err != nil {
+				return err
+			}
+			if again != passphrase {
+				return errors.New("encrypt: the passphrases do not match")
+			}
+		}
+	}
+
+	if *off {
+		if t.daemon != nil {
+			err = t.daemon.DisableVaultEncryption(passphrase)
+		} else {
+			err = t.node.DisableVaultEncryption(passphrase)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Println("Vault decrypted. Files are stored in plain text again.")
+		return nil
+	}
+	if t.daemon != nil {
+		err = t.daemon.EnableVaultEncryption(passphrase)
+	} else {
+		err = t.node.EnableVaultEncryption(passphrase)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Println("Vault encrypted. Start the daemon with SYNK_VAULT_PASSPHRASE set.")
+	return nil
+}
+
+// promptPassphrase reads a line from the terminal without echoing it.
+func promptPassphrase(prompt string) (string, error) {
+	fmt.Print(prompt)
+	raw, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Println()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(raw)), nil
 }
 
 // cmdIgnore lists, changes, or clears a library's ignore patterns — the

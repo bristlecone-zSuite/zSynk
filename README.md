@@ -42,6 +42,7 @@ Synk is pre-release. The engine passes its test suite, including reproductions o
 | iOS SwiftUI app | Builds for the simulator with the engine embedded; pairing, libraries, camera QR pairing and the read-only File Provider extension tested there |
 | Optional NAT relay | Self-hostable `synk-relay` binary with a Go client in the daemon (`synk relay wss://HOST` sets it); a Cloudflare Worker in `relay/worker` is the optional hosted convenience |
 | Selective sync | Present: per-device ignore patterns per library (`synk ignore`), never propagated as deletions ([decision 0015](docs/decisions/0015-selective-sync-is-per-device-ignore-patterns.md)) |
+| Encryption at rest | Present: the vault and the blob store seal under a passphrase (`synk encrypt`); a stolen disk yields ciphertext ([decision 0016](docs/decisions/0016-vault-and-blob-stores-are-encrypted-at-rest.md)) |
 | iOS background sync | Best effort: a flush when the app is backgrounded, then BGTaskScheduler refresh/processing tasks at the system's discretion; no push notifications, which would require a service of ours ([decision 0014](docs/decisions/0014-ios-background-sync-is-opportunistic.md)) |
 
 What comes next is in [ROADMAP.md](ROADMAP.md), and where the work stands is in [STATUS.md](STATUS.md).
@@ -101,6 +102,31 @@ directory. See [decision 0015](docs/decisions/0015-selective-sync-is-per-device-
 ./bin/synk ignore --library obsidian --remove 'Archive/**'
 ./bin/synk ignore --library obsidian --clear
 ```
+
+## Encryption at rest
+
+The transfer path is already encrypted — peers talk over mutual TLS and
+the relay only sees ciphertext. The disk was the gap: the vault (kept
+versions and quarantined bytes) and the blob store (live content) sat in
+plain text in the data directory.
+
+`synk encrypt` seals both under a key derived from a passphrase
+(Argon2id). Every file is self-describing — sealed files carry a magic
+header, plain files read as before — so a crash mid-migration leaves a
+mixed store that still opens. The passphrase is never stored; a small
+check file verifies it before anything is read.
+
+```bash
+./bin/synk encrypt                          # prompt twice
+./bin/synk encrypt --passphrase '...'       # or pass it (visible in ps)
+./bin/synk encrypt --off --passphrase '...' # unseal
+```
+
+A daemon that must start against an encrypted store sets
+`SYNK_VAULT_PASSPHRASE`. Losing the passphrase loses the local version
+history and content; the other devices still hold their copies, so a
+re-pair and re-sync rebuilds the library. See
+[decision 0016](docs/decisions/0016-vault-and-blob-stores-are-encrypted-at-rest.md).
 
 ## Safety rules (non-negotiable)
 

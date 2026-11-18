@@ -18,6 +18,7 @@ import (
 	"github.com/bristlecone-zSuite/zSynk/internal/atomicfile"
 	"github.com/bristlecone-zSuite/zSynk/internal/config"
 	"github.com/bristlecone-zSuite/zSynk/internal/engine"
+	"github.com/bristlecone-zSuite/zSynk/internal/vault"
 )
 
 func TestShareList(t *testing.T) {
@@ -325,5 +326,42 @@ func TestSize(t *testing.T) {
 		if got := size(n); got != want {
 			t.Errorf("size(%d) = %q; want %q", n, got, want)
 		}
+	}
+}
+
+func TestEncryptCommand(t *testing.T) {
+	t.Setenv("SYNK_DIR", t.TempDir())
+
+	// No passphrase and no terminal: refused.
+	if _, err := output(t, func() error { return cmdEncrypt([]string{}) }); err == nil {
+		t.Fatal("synk encrypt without a passphrase must fail")
+	}
+
+	out, err := output(t, func() error { return cmdEncrypt([]string{"--passphrase", "correct horse"}) })
+	if err != nil || !strings.Contains(out, "encrypted") {
+		t.Fatalf("synk encrypt (%v):\n%s", err, out)
+	}
+	root := filepath.Join(os.Getenv("SYNK_DIR"), "vault")
+	if !vault.IsEncrypted(root) {
+		t.Fatal("the vault is not encrypted on disk")
+	}
+
+	// With the vault encrypted, a second enable through a locked node
+	// must fail.
+	t.Setenv("SYNK_VAULT_PASSPHRASE", "correct horse")
+	if _, err := output(t, func() error { return cmdEncrypt([]string{"--passphrase", "correct horse"}) }); err == nil {
+		t.Fatal("enabling twice must fail")
+	}
+
+	// Turning it off needs the right passphrase.
+	if _, err := output(t, func() error { return cmdEncrypt([]string{"--off", "--passphrase", "wrong horse"}) }); err == nil {
+		t.Fatal("disable with the wrong passphrase must fail")
+	}
+	out, err = output(t, func() error { return cmdEncrypt([]string{"--off", "--passphrase", "correct horse"}) })
+	if err != nil || !strings.Contains(out, "plain") {
+		t.Fatalf("synk encrypt --off (%v):\n%s", err, out)
+	}
+	if vault.IsEncrypted(root) {
+		t.Fatal("the vault is still encrypted after --off")
 	}
 }

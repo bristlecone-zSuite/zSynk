@@ -80,6 +80,17 @@ What remains, said plainly:
 
 The mass-delete brake (a scan that would delete more than 50 files, or a tenth of a library, holds them for confirmation) applies to deletes a device's **own** scan finds. A delete that arrives from a peer is snapshotted and applied; putting the same brake on the receiving side is a possible later hardening, recorded as a limit here until then.
 
+### A stolen device or disk image
+
+A laptop that is stolen, a disk image taken from a backup, or a process that reads the data directory, all get the store at rest: the vault (kept versions, quarantined bytes) and the blob store (live content).
+
+What stops it, in `internal/vault` and `internal/blob` ([decision 0016](decisions/0016-vault-and-blob-stores-are-encrypted-at-rest.md)):
+
+- **Encryption at rest.** When the user has run `synk encrypt`, every vault and blob file is an AES-256-GCM envelope under a key derived from a passphrase with Argon2id. The passphrase is never stored; a check file verifies it before reads. A stolen disk yields ciphertext and a salt, and recovering the data needs the passphrase.
+- **No plaintext side channels.** In an encrypted vault, quarantined content is stored under a fixed label, so file names do not appear on disk.
+
+What remains: the protection is opt-in. Until `synk encrypt` runs, the store is plain text and a stolen disk is a full read. And the passphrase is the single point of failure: losing it loses the local version history and content (the other devices still hold their copies), and a passphrase that is also the user's password is only as strong as that password.
+
 ## Out of scope (for now)
 
 - A compromised user account (malware running as the user). See "Other local users".

@@ -70,6 +70,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/doctor", s.doctor)
 	mux.HandleFunc("POST /v1/config/name", s.setDeviceName)
 	mux.HandleFunc("POST /v1/config/relay", s.setRelay)
+	mux.HandleFunc("POST /v1/config/encryption/enable", s.enableEncryption)
+	mux.HandleFunc("POST /v1/config/encryption/disable", s.disableEncryption)
 	mux.HandleFunc("GET /v1/login", s.getLogin)
 	mux.HandleFunc("POST /v1/login", s.enableLogin)
 	mux.HandleFunc("DELETE /v1/login", s.disableLogin)
@@ -617,6 +619,56 @@ func (s *Server) setRelay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"relay": relayURL})
+}
+
+// enableEncryption and disableEncryption drive the node's at-rest
+// encryption. The passphrase never lands anywhere: it drives Argon2id,
+// seals or unseals the store, and is dropped with the request. A locked
+// vault answers 403; a request that doesn't match the node's state
+// answers 400.
+func encryptionPassphrase(w http.ResponseWriter, r *http.Request) (string, bool) {
+	var body passphraseBody
+	if !decode(w, r, &body) {
+		return "", false
+	}
+	pass := strings.TrimSpace(body.Passphrase)
+	if pass == "" {
+		writeError(w, http.StatusBadRequest, "a passphrase is required")
+		return "", false
+	}
+	return pass, true
+}
+
+func (s *Server) enableEncryption(w http.ResponseWriter, r *http.Request) {
+	pass, ok := encryptionPassphrase(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Node.EnableVaultEncryption(pass); err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"vaultEncrypted": true})
+}
+
+func (s *Server) disableEncryption(w http.ResponseWriter, r *http.Request) {
+	pass, ok := encryptionPassphrase(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Node.DisableVaultEncryption(pass); err != nil {
+		writeVaultError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"vaultEncrypted": false})
+}
+
+func writeVaultError(w http.ResponseWriter, err error) {
+	if errors.Is(err, vault.ErrVaultLocked) {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	writeError(w, http.StatusBadRequest, err.Error())
 }
 
 // enableLogin registers the bundled engine as a login item.

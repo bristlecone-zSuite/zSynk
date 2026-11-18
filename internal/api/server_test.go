@@ -796,3 +796,34 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+func TestConfigEncryption(t *testing.T) {
+	s := newServer(t, "Mac")
+	if s.Node.Status().VaultEncrypted {
+		t.Fatal("a fresh node starts plain")
+	}
+	post := func(path, body string) int {
+		return serve(s, request(s, http.MethodPost, path, body)).Code
+	}
+	if code := post("/v1/config/encryption/enable", `{"passphrase":""}`); code != http.StatusBadRequest {
+		t.Errorf("empty passphrase: got %d, want 400", code)
+	}
+	if code := post("/v1/config/encryption/enable", `{"passphrase":"correct horse"}`); code != http.StatusOK {
+		t.Errorf("enable: got %d, want 200", code)
+	}
+	if !s.Node.Status().VaultEncrypted {
+		t.Error("enable must set vaultEncrypted")
+	}
+	if code := post("/v1/config/encryption/enable", `{"passphrase":"correct horse"}`); code != http.StatusBadRequest {
+		t.Errorf("enable twice: got %d, want 400", code)
+	}
+	if code := post("/v1/config/encryption/disable", `{"passphrase":"wrong horse"}`); code != http.StatusForbidden {
+		t.Errorf("disable with the wrong passphrase: got %d, want 403", code)
+	}
+	if code := post("/v1/config/encryption/disable", `{"passphrase":"correct horse"}`); code != http.StatusOK {
+		t.Errorf("disable: got %d, want 200", code)
+	}
+	if s.Node.Status().VaultEncrypted {
+		t.Error("disable must clear vaultEncrypted")
+	}
+}

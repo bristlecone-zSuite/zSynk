@@ -57,6 +57,21 @@ type relayBody struct {
 	Relay string `json:"relay"`
 }
 
+// EnableVaultEncryption seals the node's vault and blobs under a key
+// derived from the passphrase. DisableVaultEncryption unseals them.
+// Both refuse when the node's state doesn't match the request.
+func (c *Client) EnableVaultEncryption(passphrase string) error {
+	return c.do(http.MethodPost, "/v1/config/encryption/enable", passphraseBody{Passphrase: passphrase}, nil)
+}
+
+func (c *Client) DisableVaultEncryption(passphrase string) error {
+	return c.do(http.MethodPost, "/v1/config/encryption/disable", passphraseBody{Passphrase: passphrase}, nil)
+}
+
+type passphraseBody struct {
+	Passphrase string `json:"passphrase"`
+}
+
 func (c *Client) EnableLibrary(l config.Library) (config.Library, error) {
 	var out config.Library
 	err := c.do(http.MethodPost, "/v1/libraries", l, &out)
