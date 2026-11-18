@@ -67,9 +67,13 @@ if ! xcodegen generate > .build/xcodegen.log 2>&1; then
 fi
 note "ok"
 
-# Pick a concrete simulator: prefer an iPhone that is not already booted
-# (this machine runs other work), fall back to any iPhone, and say so.
-UDID=$(xcrun simctl list devices available 2>/dev/null | awk -F'[()]' '/iPhone/ && !/Booted/{ print $2; exit }')
+# Pick a concrete simulator: an explicit override wins (SYNK_IOS_UDID),
+# then prefer an iPhone that is not already booted (this machine runs
+# other work), fall back to any iPhone, and say so.
+UDID="${SYNK_IOS_UDID:-}"
+if [ -z "$UDID" ]; then
+	UDID=$(xcrun simctl list devices available 2>/dev/null | awk -F'[()]' '/iPhone/ && !/Booted/{ print $2; exit }')
+fi
 if [ -z "$UDID" ]; then
 	UDID=$(xcrun simctl list devices available 2>/dev/null | awk -F'[()]' '/iPhone/{ print $2; exit }')
 fi
