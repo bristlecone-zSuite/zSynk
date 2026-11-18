@@ -39,6 +39,7 @@ check: vet race lint
 build:
 	mkdir -p bin
 	$(GO) build -o $(BIN) ./cmd/synk
+	$(GO) build -o bin/synk-relay ./cmd/synk-relay
 
 doctor: build
 	SYNK_DIR=.data ./$(BIN) init --name "dev"

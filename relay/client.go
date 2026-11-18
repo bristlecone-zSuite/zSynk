@@ -57,23 +57,37 @@ func RoomName(secret string, myID, peerID, topic string) string {
 // does not wait for the second peer; the Synk handshake over the returned
 // conn has its own deadline.
 //
+// ValidateRelayURL checks that a relay URL is one Synk can dial: a ws or
+// wss URL with a host. It is the single spelling both the config API (so a
+// bad URL is rejected when it is saved) and Dial use.
+func ValidateRelayURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("relay: parse relay URL: %w", err)
+	}
+	switch u.Scheme {
+	case "ws", "wss":
+	default:
+		return fmt.Errorf("relay: unsupported scheme %q (want ws or wss)", u.Scheme)
+	}
+	if u.Host == "" {
+		return errors.New("relay: missing host")
+	}
+	return nil
+}
+
 // addr is the peer's direct address; it is used only for logging and
 // diagnostics. The returned conn carries the raw (or TLS-encrypted)
 // connection through which the Synk TLS handshake runs.
 func Dial(relayURL, addr, secret string, myID, peerID, topic string, timeout time.Duration) (net.Conn, error) {
 	room := RoomName(secret, myID, peerID, topic)
-	u, err := url.Parse(relayURL)
-	if err != nil {
-		return nil, fmt.Errorf("relay: parse relay URL: %w", err)
+	if err := ValidateRelayURL(relayURL); err != nil {
+		return nil, err
 	}
-	switch u.Scheme {
-	case "ws", "wss":
-	default:
-		return nil, fmt.Errorf("relay: unsupported scheme %q (want ws or wss)", u.Scheme)
-	}
-	if u.Host == "" {
-		return nil, errors.New("relay: missing host")
-	}
+	u, _ := url.Parse(relayURL)
 	u.Scheme = "http"
 	if strings.HasPrefix(relayURL, "wss") {
 		u.Scheme = "https"

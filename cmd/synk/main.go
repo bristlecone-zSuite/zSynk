@@ -27,6 +27,7 @@ import (
 	"github.com/bristlecone-zSuite/zSynk/internal/pairing"
 	"github.com/bristlecone-zSuite/zSynk/internal/safepath"
 	"github.com/bristlecone-zSuite/zSynk/internal/vault"
+	"github.com/bristlecone-zSuite/zSynk/relay"
 )
 
 func main() {
@@ -74,6 +75,8 @@ func main() {
 		err = cmdVersions(args)
 	case "restore":
 		err = cmdRestore(args)
+	case "relay":
+		err = cmdRelay(args)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -110,6 +113,7 @@ Usage:
   synk unpair --device ID
   synk versions --library ID [--path PATH]
   synk restore --library ID --path PATH [--version VERSION]
+  synk relay [wss://HOST | clear]
 
 Before a sync replaces or deletes a file, Synk keeps a copy: synk versions
 lists them, and synk restore puts one back. synk pause stops a library
@@ -676,6 +680,68 @@ func cmdResume(args []string) error {
 		fmt.Printf("Resumed %s. What changed while it was paused syncs now.\n", id)
 		return nil
 	})
+}
+
+// cmdRelay sets, shows, or clears the relay URL the node dials when no
+// direct connection works: `synk relay`, `synk relay wss://HOST`, `synk
+// relay clear`. The URL is validated the same way the relay client dials
+// by, whether the change goes through a running daemon or straight to the
+// node's config.
+func cmdRelay(args []string) error {
+	t, err := connect("")
+	if err != nil {
+		return err
+	}
+	defer t.close()
+
+	switch {
+	case len(args) == 1 && args[0] == "clear":
+		if err := setRelay(t, ""); err != nil {
+			return err
+		}
+		fmt.Println("Relay cleared. Direct LAN connections only.")
+	case len(args) == 1:
+		if err := setRelay(t, args[0]); err != nil {
+			return err
+		}
+		fmt.Printf("Relay set: %s\n", args[0])
+	case len(args) == 0:
+		url, err := getRelay(t)
+		if err != nil {
+			return err
+		}
+		if url == "" {
+			fmt.Println("No relay is set. Direct LAN connections only.")
+		} else {
+			fmt.Printf("Relay: %s\n", url)
+		}
+	default:
+		return errors.New("relay: give a ws:// or wss:// URL, or clear")
+	}
+	return nil
+}
+
+func setRelay(t *target, relayURL string) error {
+	if t.daemon != nil {
+		_, err := t.daemon.SetRelay(relayURL)
+		return err
+	}
+	if err := relay.ValidateRelayURL(relayURL); err != nil {
+		return err
+	}
+	t.node.Config.Relay = relayURL
+	return config.Save(t.node.DataDir, t.node.Config)
+}
+
+func getRelay(t *target) (string, error) {
+	if t.daemon != nil {
+		st, err := t.daemon.Status()
+		if err != nil {
+			return "", err
+		}
+		return st.Relay, nil
+	}
+	return t.node.Config.Relay, nil
 }
 
 // cmdRemove forgets a library. Synk keeps the files, the versions in the

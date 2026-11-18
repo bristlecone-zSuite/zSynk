@@ -708,10 +708,13 @@ func (n *Node) differs(local, remote *reconcile.Index) bool {
 }
 
 type Status struct {
-	DeviceID  string         `json:"deviceId"`
-	Name      string         `json:"name"`
-	Listen    string         `json:"listen,omitempty"`
-	API       string         `json:"api,omitempty"`
+	DeviceID string `json:"deviceId"`
+	Name     string `json:"name"`
+	Listen   string `json:"listen,omitempty"`
+	API      string `json:"api,omitempty"`
+	// Relay is the optional relay URL the node dials when direct
+	// connections fail; empty means direct LAN connections only.
+	Relay     string         `json:"relay,omitempty"`
 	Libraries []LibraryState `json:"libraries"`
 	Peers     []config.Peer  `json:"peers"`
 }
@@ -768,6 +771,7 @@ func (n *Node) Status() Status {
 		Name:      n.Device.Name,
 		Listen:    listen,
 		API:       n.Config.API,
+		Relay:     n.Config.Relay,
 		Libraries: []LibraryState{},
 		Peers:     make([]config.Peer, 0, len(n.Config.Peers)),
 	}

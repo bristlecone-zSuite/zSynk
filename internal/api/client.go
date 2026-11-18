@@ -46,6 +46,17 @@ func (c *Client) Status() (engine.Status, error) {
 	return st, err
 }
 
+// SetRelay stores or clears (empty string) the daemon's relay URL.
+func (c *Client) SetRelay(relayURL string) (string, error) {
+	var out relayBody
+	err := c.do(http.MethodPost, "/v1/config/relay", relayBody{Relay: relayURL}, &out)
+	return out.Relay, err
+}
+
+type relayBody struct {
+	Relay string `json:"relay"`
+}
+
 func (c *Client) EnableLibrary(l config.Library) (config.Library, error) {
 	var out config.Library
 	err := c.do(http.MethodPost, "/v1/libraries", l, &out)

@@ -176,6 +176,56 @@ func TestRestoreCommand(t *testing.T) {
 	}
 }
 
+// TestRelayCommand covers `synk relay`: setting a ws or wss URL, printing
+// the current one, clearing it, and rejecting everything else.
+func TestRelayCommand(t *testing.T) {
+	t.Setenv("SYNK_DIR", t.TempDir())
+
+	out, err := output(t, func() error { return cmdRelay([]string{}) })
+	if err != nil || out != "No relay is set. Direct LAN connections only.\n" {
+		t.Fatalf("synk relay with none set (%v):\n%s", err, out)
+	}
+
+	out, err = output(t, func() error { return cmdRelay([]string{"wss://relay.example.com"}) })
+	if err != nil || out != "Relay set: wss://relay.example.com\n" {
+		t.Fatalf("synk relay set (%v):\n%s", err, out)
+	}
+	n, err := openNode("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Config.Relay != "wss://relay.example.com" {
+		n.Close()
+		t.Fatalf("config not updated: %q", n.Config.Relay)
+	}
+	n.Close()
+
+	out, err = output(t, func() error { return cmdRelay([]string{}) })
+	if err != nil || out != "Relay: wss://relay.example.com\n" {
+		t.Fatalf("synk relay with one set (%v):\n%s", err, out)
+	}
+
+	out, err = output(t, func() error { return cmdRelay([]string{"clear"}) })
+	if err != nil || out != "Relay cleared. Direct LAN connections only.\n" {
+		t.Fatalf("synk relay clear (%v):\n%s", err, out)
+	}
+	if out, err = output(t, func() error { return cmdRelay([]string{}) }); err != nil || out != "No relay is set. Direct LAN connections only.\n" {
+		t.Fatalf("synk relay after clear (%v):\n%s", err, out)
+	}
+
+	for _, bad := range []string{"ftp://relay.example.com", "wss://", "https://relay.example.com"} {
+		if _, err := output(t, func() error { return cmdRelay([]string{bad}) }); err == nil {
+			t.Fatalf("synk relay %q: accepted", bad)
+		}
+	}
+	if n, err := openNode(""); err == nil {
+		defer n.Close()
+		if n.Config.Relay != "" {
+			t.Fatalf("rejected URL changed config: %q", n.Config.Relay)
+		}
+	}
+}
+
 // output returns what f prints.
 func output(t *testing.T, f func() error) (string, error) {
 	t.Helper()

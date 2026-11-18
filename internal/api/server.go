@@ -21,6 +21,7 @@ import (
 	"github.com/bristlecone-zSuite/zSynk/internal/engine"
 	"github.com/bristlecone-zSuite/zSynk/internal/pairing"
 	"github.com/bristlecone-zSuite/zSynk/internal/vault"
+	"github.com/bristlecone-zSuite/zSynk/relay"
 )
 
 // maxBody bounds request bodies; the largest is a list of held deletes.
@@ -67,6 +68,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sync", s.sync)
 	mux.HandleFunc("GET /v1/doctor", s.doctor)
 	mux.HandleFunc("POST /v1/config/name", s.setDeviceName)
+	mux.HandleFunc("POST /v1/config/relay", s.setRelay)
 	mux.HandleFunc("GET /v1/login", s.getLogin)
 	mux.HandleFunc("POST /v1/login", s.enableLogin)
 	mux.HandleFunc("DELETE /v1/login", s.disableLogin)
@@ -576,6 +578,28 @@ func (s *Server) setDeviceName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"name": name})
+}
+
+// setRelay stores or clears the relay URL the node dials when direct
+// connections fail. An empty URL clears it. The URL is validated against
+// the same rules the relay client dials by, so a URL that is saved always
+// parses.
+func (s *Server) setRelay(w http.ResponseWriter, r *http.Request) {
+	var body relayBody
+	if !decode(w, r, &body) {
+		return
+	}
+	relayURL := strings.TrimSpace(body.Relay)
+	if err := relay.ValidateRelayURL(relayURL); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.Node.Config.Relay = relayURL
+	if err := config.Save(s.Node.DataDir, s.Node.Config); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save relay: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"relay": relayURL})
 }
 
 // enableLogin registers the bundled engine as a login item.
