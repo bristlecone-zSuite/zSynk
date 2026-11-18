@@ -5,6 +5,7 @@
 
 import Foundation
 import FileProvider
+import SynkCore
 import UIKit
 
 @MainActor
