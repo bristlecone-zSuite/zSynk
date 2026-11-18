@@ -13,6 +13,10 @@ import XCTest
 /// a submission there. The identifier contract is still enforced on every
 /// platform by testRegisteredIdentifiersMatchTheInfoPlist, and the submit
 /// path is exercised in full on a real device.
+///
+/// The tests rely on the host app's launch-time registration and never
+/// call register() themselves: a second registration in the same process
+/// is an NSInternalInconsistencyException, not a no-op.
 final class BackgroundSyncTests: XCTestCase {
     func testRegisteredIdentifiersMatchTheInfoPlist() {
         let declared = Bundle.main.object(
@@ -29,10 +33,11 @@ final class BackgroundSyncTests: XCTestCase {
     }
 
     func testSubmittingBackgroundSyncRequestsSucceeds() throws {
-        // Guarantee the identifiers are registered, independently of whether
-        // the host app's launch path ran. Registering an already-registered
-        // identifier is a no-op that keeps the first handler.
-        BackgroundSync.register()
+        // The host app registered the launch handlers when it launched, and
+        // the test must not register them again: BGTaskScheduler allows
+        // exactly one handler per identifier per process, and a second
+        // registration raises NSInternalInconsistencyException rather than
+        // being a no-op.
         #if targetEnvironment(simulator)
         // The simulator has no background-task daemon, so BGTaskScheduler
         // cannot accept a submission there (decision 0017). The identifier

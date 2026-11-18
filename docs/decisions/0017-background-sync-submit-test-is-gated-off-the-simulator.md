@@ -16,14 +16,22 @@ missing-registration bug. The cause is the platform: the iOS Simulator has no
 background-task daemon, so `BGTaskScheduler.submit` cannot be accepted there.
 This is a long-standing simulator limitation, not a regression.
 
+The first attempt at this fix also called `BackgroundSync.register()` at the
+start of the submit test, on the assumption that registering an
+already-registered identifier is a no-op. CI disproved that: the host app's
+app delegate registers the handlers at launch, and the test's second
+registration crashed with `NSInternalInconsistencyException` — "Launch
+handler for task with identifier com.zyniker.synk.refresh has already been
+registered". `BGTaskScheduler.register` allows exactly one handler per
+identifier per process and is not idempotent.
+
 ## Decision
 
 The submit assertion is gated off the simulator with
 `#if targetEnvironment(simulator)`: on the simulator the test skips with a
-clear reason, and on a real device it runs in full. The test also calls
-`BackgroundSync.register()` first so that registration is guaranteed
-independently of whether the host app's launch path ran (registering an
-already-registered identifier is a no-op that keeps the first handler).
+clear reason, and on a real device it runs in full. The test never calls
+`BackgroundSync.register()` itself: registration is the host app's job, and
+doing it again from the test raises `NSInternalInconsistencyException`.
 
 This is not a loosened check. The assertion itself is unchanged, and the
 identifier contract — the part that actually protects the app from silently
