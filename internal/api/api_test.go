@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bristlecone-zSuite/zSynk/internal/config"
 	"github.com/bristlecone-zSuite/zSynk/internal/engine"
 )
 
@@ -85,6 +86,43 @@ func TestConfigRelay(t *testing.T) {
 	}
 	if s.Node.Config.Relay != "" {
 		t.Errorf("rejected body changed config: %q", s.Node.Config.Relay)
+	}
+}
+
+// Setting a library's ignore patterns goes through the API, replaces the
+// whole list, shows in status, and an unknown library is a 404.
+func TestConfigLibraryIgnore(t *testing.T) {
+	s := newServer(t, "Mac")
+	must(t, s.Node.EnableLibrary(config.Library{ID: "notes", Preset: "custom", Label: "n", Path: t.TempDir() + "/notes"}))
+
+	w := serve(s, request(s, http.MethodPost, "/v1/libraries/notes/ignore", `{"ignore":["Archive/**","!Archive/keep/**"]}`))
+	if w.Code != http.StatusOK {
+		t.Fatalf("set ignore: %d %s", w.Code, w.Body.String())
+	}
+	lib, ok := s.Node.Library("notes")
+	if !ok || len(lib.Ignore) != 2 || lib.Ignore[0] != "Archive/**" {
+		t.Fatalf("patterns not saved: %+v (%v)", lib.Ignore, ok)
+	}
+	var st engine.Status
+	if err := json.Unmarshal(serve(s, request(s, http.MethodGet, "/v1/status", "")).Body.Bytes(), &st); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if len(st.Libraries) != 1 || len(st.Libraries[0].Ignore) != 2 {
+		t.Fatalf("status libraries: %+v", st.Libraries)
+	}
+
+	// An empty list clears. A missing or null list is the same thing:
+	// the whole list is always replaced.
+	if w := serve(s, request(s, http.MethodPost, "/v1/libraries/notes/ignore", `{"ignore":[]}`)); w.Code != http.StatusOK {
+		t.Fatalf("clear ignore: %d %s", w.Code, w.Body.String())
+	}
+
+	w = serve(s, request(s, http.MethodPost, "/v1/libraries/other/ignore", `{"ignore":["x"]}`))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown library: %d %s, want 404", w.Code, w.Body.String())
+	}
+	if w := serve(s, request(s, http.MethodPost, "/v1/libraries/notes/ignore", `{bad`)); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad body: %d %s, want 400", w.Code, w.Body.String())
 	}
 }
 

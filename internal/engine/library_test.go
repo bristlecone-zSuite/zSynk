@@ -412,3 +412,60 @@ func wantGone(t *testing.T, dir, rel string) {
 		t.Fatalf("%s still exists (%v)", rel, err)
 	}
 }
+
+// Selective sync: a library's own ignore patterns exclude paths on this
+// device only, in addition to the global and the preset's patterns. A peer's
+// files under an ignored path never arrive here, and a peer's deletion of a
+// path this device ignores never deletes the local copy. Ignoring a path
+// that already synced keeps the local copy and its index entry: a pattern
+// must never turn into a deletion for anyone.
+func TestSelectiveSyncPerLibraryIgnores(t *testing.T) {
+	a, b := openNode(t, "A"), openNode(t, "B")
+	must(t, Pair(a, b))
+	dirA := library(t, a, "notes")
+	dirB := library(t, b, "notes")
+	must(t, a.SetLibraryIgnore("notes", []string{" Archive/** ", "", "Archive/**"}))
+	if lib := a.Config.LibraryByID("notes"); len(lib.Ignore) != 1 || lib.Ignore[0] != "Archive/**" {
+		t.Fatalf("SetLibraryIgnore kept %+v; want one trimmed pattern", lib.Ignore)
+	}
+
+	writeFile(t, dirB, "Archive/x.md", "ignored")
+	writeFile(t, dirB, "top.md", "synced")
+	must(t, SyncOnce(a, b, "notes"))
+	wantFile(t, dirA, "top.md", "synced")
+	wantFile(t, dirB, "Archive/x.md", "ignored")
+	wantGone(t, dirA, "Archive/x.md")
+	if got := a.Status().Libraries[0].Files; got != 1 {
+		t.Fatalf("A counts %d files; want only the ones it does not ignore", got)
+	}
+
+	// A peer's deletion inside the ignored subtree never deletes the copy
+	// this device keeps on disk.
+	writeFile(t, dirA, "Archive/x.md", "kept")
+	must(t, os.RemoveAll(filepath.Join(dirB, "Archive")))
+	must(t, SyncOnce(a, b, "notes"))
+	wantFile(t, dirA, "Archive/x.md", "kept")
+	wantGone(t, dirB, "Archive/x.md")
+	if lib := b.Config.LibraryByID("notes"); len(lib.Ignore) != 0 {
+		t.Fatalf("B's patterns changed to %v; patterns stay per device", lib.Ignore)
+	}
+	if err := os.RemoveAll(filepath.Join(dirA, "Archive")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A file this device synced before the pattern existed keeps its index
+	// entry when the pattern hides it from the scan: no tombstone, so no
+	// deletion ever reaches the peer, and this device's own delete of an
+	// ignored path propagates neither.
+	writeFile(t, dirB, "late.md", "late")
+	must(t, SyncOnce(a, b, "notes"))
+	wantFile(t, dirA, "late.md", "late")
+	must(t, a.SetLibraryIgnore("notes", []string{"late.md"}))
+	must(t, SyncOnce(a, b, "notes"))
+	wantFile(t, dirA, "late.md", "late")
+	wantFile(t, dirB, "late.md", "late")
+	must(t, os.Remove(filepath.Join(dirA, "late.md")))
+	must(t, SyncOnce(a, b, "notes"))
+	wantGone(t, dirA, "late.md")
+	wantFile(t, dirB, "late.md", "late")
+}

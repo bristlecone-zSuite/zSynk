@@ -57,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/libraries/{id}/deletes/restore", s.restoreDeletes)
 	mux.HandleFunc("GET /v1/libraries/{id}/versions", s.versions)
 	mux.HandleFunc("POST /v1/libraries/{id}/versions/restore", s.restoreVersion)
+	mux.HandleFunc("POST /v1/libraries/{id}/ignore", s.setIgnore)
 	mux.HandleFunc("POST /v1/libraries/{id}/pause", s.pauseLibrary)
 	mux.HandleFunc("POST /v1/libraries/{id}/resume", s.resumeLibrary)
 	mux.HandleFunc("DELETE /v1/libraries/{id}", s.removeLibrary)
@@ -454,6 +455,22 @@ func Diagnose(st engine.Status) Report {
 		}
 	}
 	return Report{OK: len(issues) == 0, Issues: issues, Status: st}
+}
+
+// setIgnore replaces a library's per-device ignore patterns. Selective
+// sync is per device: these patterns apply on this device only.
+func (s *Server) setIgnore(w http.ResponseWriter, r *http.Request) {
+	var body ignoreBody
+	if !decode(w, r, &body) {
+		return
+	}
+	id := r.PathValue("id")
+	if err := s.Node.SetLibraryIgnore(id, body.Ignore); err != nil {
+		writeEngineError(w, err, http.StatusInternalServerError)
+		return
+	}
+	lib, _ := s.Node.Library(id)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "library": lib})
 }
 
 // pauseLibrary stops syncing a library until it's resumed. Its files

@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -75,6 +76,8 @@ func main() {
 		err = cmdVersions(args)
 	case "restore":
 		err = cmdRestore(args)
+	case "ignore":
+		err = cmdIgnore(args)
 	case "relay":
 		err = cmdRelay(args)
 	case "help", "-h", "--help":
@@ -113,6 +116,7 @@ Usage:
   synk unpair --device ID
   synk versions --library ID [--path PATH]
   synk restore --library ID --path PATH [--version VERSION]
+  synk ignore --library ID [--add PAT]... [--remove PAT]... [--clear]
   synk relay [wss://HOST | clear]
 
 Before a sync replaces or deletes a file, Synk keeps a copy: synk versions
@@ -719,6 +723,115 @@ func cmdRelay(args []string) error {
 		return errors.New("relay: give a ws:// or wss:// URL, or clear")
 	}
 	return nil
+}
+
+// cmdIgnore lists, changes, or clears a library's ignore patterns — the
+// per-device part of selective sync. Patterns are per device on purpose:
+// one device may leave a subtree alone while the others sync it in full.
+// --add and --remove take one pattern each and may repeat; --clear empties
+// the list; without them the list is printed.
+func cmdIgnore(args []string) error {
+	fs := flag.NewFlagSet("ignore", flag.ExitOnError)
+	id := fs.String("library", "", "library id")
+	var add, remove []string
+	fs.Func("add", "add a pattern (repeatable)", func(p string) error {
+		add = append(add, p)
+		return nil
+	})
+	fs.Func("remove", "remove a pattern by exact match (repeatable)", func(p string) error {
+		remove = append(remove, p)
+		return nil
+	})
+	clear := fs.Bool("clear", false, "remove every pattern")
+	_ = fs.Parse(args)
+	if *id == "" {
+		return fmt.Errorf("ignore: --library is required")
+	}
+	// A pattern never starts with "-": without this check, `--add --clear`
+	// would quietly add "--clear" as a pattern, because the flag package
+	// hands the next argument over as the flag's value.
+	for _, p := range append(append([]string{}, add...), remove...) {
+		if p = strings.TrimSpace(p); p == "" || strings.HasPrefix(p, "-") {
+			return fmt.Errorf("ignore: %q is not a pattern", p)
+		}
+	}
+	if len(add) > 0 && *clear {
+		return fmt.Errorf("ignore: --clear cannot be combined with --add")
+	}
+	t, err := connect("")
+	if err != nil {
+		return err
+	}
+	defer t.close()
+	lib, err := libraryOf(t, *id)
+	if err != nil {
+		return err
+	}
+	if len(add) > 0 || len(remove) > 0 || *clear {
+		keep := lib.Ignore
+		if *clear {
+			keep = nil
+		}
+		for _, p := range add {
+			if p = strings.TrimSpace(p); p != "" && !slices.Contains(keep, p) {
+				keep = append(keep, p)
+			}
+		}
+		after := keep[:0]
+		for _, have := range keep {
+			if slices.Contains(remove, have) {
+				continue
+			}
+			after = append(after, have)
+		}
+		if err := setLibraryIgnore(t, *id, after); err != nil {
+			return err
+		}
+		lib, err = libraryOf(t, *id)
+		if err != nil {
+			return err
+		}
+	}
+	if len(lib.Ignore) == 0 {
+		fmt.Printf("No ignore patterns for %s.\n", *id)
+		return nil
+	}
+	fmt.Printf("Ignore patterns for %s:\n", *id)
+	for _, p := range lib.Ignore {
+		fmt.Printf("  %s\n", p)
+	}
+	return nil
+}
+
+// libraryOf reads one library's config, from the daemon or directly.
+func libraryOf(t *target, id string) (config.Library, error) {
+	if t.daemon != nil {
+		st, err := t.daemon.Status()
+		if err != nil {
+			return config.Library{}, err
+		}
+		for _, l := range st.Libraries {
+			if l.ID == id {
+				return l.Library, nil
+			}
+		}
+		return config.Library{}, fmt.Errorf("%w %q", engine.ErrUnknownLibrary, id)
+	}
+	lib := t.node.Config.LibraryByID(id)
+	if lib == nil {
+		return config.Library{}, fmt.Errorf("%w %q", engine.ErrUnknownLibrary, id)
+	}
+	return *lib, nil
+}
+
+// setLibraryIgnore writes a library's ignore patterns, through the daemon
+// when one is running.
+func setLibraryIgnore(t *target, id string, ignore []string) error {
+	if t.daemon != nil {
+		_, err := t.daemon.SetLibraryIgnore(id, ignore)
+		return err
+	}
+	return t.node.SetLibraryIgnore(id, ignore)
 }
 
 func setRelay(t *target, relayURL string) error {

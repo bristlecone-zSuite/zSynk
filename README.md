@@ -41,6 +41,7 @@ Synk is pre-release. The engine passes its test suite, including reproductions o
 | macOS SwiftUI app | Built and tested in CI against two real daemons; release signing machinery ready |
 | iOS SwiftUI app | Builds for the simulator with the engine embedded; pairing, libraries, camera QR pairing and the read-only File Provider extension tested there |
 | Optional NAT relay | Self-hostable `synk-relay` binary with a Go client in the daemon (`synk relay wss://HOST` sets it); a Cloudflare Worker in `relay/worker` is the optional hosted convenience |
+| Selective sync | Present: per-device ignore patterns per library (`synk ignore`), never propagated as deletions ([decision 0015](docs/decisions/0015-selective-sync-is-per-device-ignore-patterns.md)) |
 | iOS background sync | Best effort: a flush when the app is backgrounded, then BGTaskScheduler refresh/processing tasks at the system's discretion; no push notifications, which would require a service of ours ([decision 0014](docs/decisions/0014-ios-background-sync-is-opportunistic.md)) |
 
 What comes next is in [ROADMAP.md](ROADMAP.md), and where the work stands is in [STATUS.md](STATUS.md).
@@ -83,6 +84,23 @@ make build && ./bin/synk-relay -addr :7430 -cert CERT.pem -key KEY.pem
 The relay forwards encrypted traffic only: it sees room names, never keys or
 files. `synk relay` with no argument shows what is set; `synk relay clear`
 removes it. See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the wire protocol.
+
+## Selective sync
+
+A device can leave a subtree alone while the others sync it in full. The
+patterns are per device — they never travel the wire, and they never turn
+into deletions: ignoring a path that already synced keeps the local copy,
+and a peer's delete of an ignored path does not delete it here. Last
+matching pattern wins, so `!` re-includes; an ignored directory is not
+scanned into, so a re-include cannot rescue paths under an excluded
+directory. See [decision 0015](docs/decisions/0015-selective-sync-is-per-device-ignore-patterns.md).
+
+```bash
+./bin/synk ignore --library obsidian                      # list
+./bin/synk ignore --library obsidian --add 'Archive/**'   # add (repeatable)
+./bin/synk ignore --library obsidian --remove 'Archive/**'
+./bin/synk ignore --library obsidian --clear
+```
 
 ## Safety rules (non-negotiable)
 

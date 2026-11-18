@@ -82,6 +82,11 @@ func (n *Node) EnableLibrary(l config.Library) error {
 		return err
 	}
 	l.ShareWith = share
+	if l.Ignore == nil && old != nil {
+		// An update that carries no patterns keeps the ones set before:
+		// callers that don't know the field must not un-ignore files.
+		l.Ignore = old.Ignore
+	}
 	if l.Label == "" {
 		l.Label = preset.Name
 	}
@@ -97,6 +102,31 @@ func (n *Node) EnableLibrary(l config.Library) error {
 	}
 	n.Config.UpsertLibrary(l)
 	n.indexes[l.ID] = idx
+	return n.saveConfigLocked()
+}
+
+// SetLibraryIgnore writes a library's per-device ignore patterns and saves
+// the config: selective sync is per device on purpose, so one device may
+// leave a subtree alone while the others sync it in full. Patterns are
+// trimmed, emptied ones dropped, and duplicates kept once, in order — order
+// matters, because the last matching pattern wins.
+func (n *Node) SetLibraryIgnore(id string, patterns []string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	lib := n.Config.LibraryByID(id) // points into the config; replaced below
+	if lib == nil {
+		return fmt.Errorf("%w %q", ErrUnknownLibrary, id)
+	}
+	// Ignore starts nil, so append below allocates a new backing array
+	// and nothing aliases the slice the old config entry still holds.
+	lib.Ignore = nil
+	for _, p := range patterns {
+		if p = strings.TrimSpace(p); p != "" && !slices.Contains(lib.Ignore, p) {
+			lib.Ignore = append(lib.Ignore, p)
+		}
+	}
+	lib.Path = filepath.Clean(lib.Path)
+	n.Config.UpsertLibrary(*lib)
 	return n.saveConfigLocked()
 }
 
@@ -165,6 +195,7 @@ func (n *Node) Library(id string) (config.Library, bool) {
 
 func cloneLibrary(l config.Library) config.Library {
 	l.ShareWith = slices.Clone(l.ShareWith)
+	l.Ignore = slices.Clone(l.Ignore)
 	return l
 }
 
@@ -246,13 +277,15 @@ func plausibleRoot(root string, idx *reconcile.Index) bool {
 	return !known
 }
 
-// ignorer is the ignore matcher for lib: the global patterns plus its
-// preset's.
+// ignorer is the ignore matcher for lib: the global patterns, its preset's,
+// and the patterns this device added to the library itself (last, so a
+// device's own "!" re-includes win over the preset's).
 func ignorer(lib *config.Library) *ignore.Matcher {
 	var extra []string
 	if p, ok := apps.ByID(lib.Preset); ok {
 		extra = p.Ignore
 	}
+	extra = append(extra, lib.Ignore...)
 	return scan.Ignorer(extra)
 }
 

@@ -30,6 +30,12 @@ type Library struct {
 	Label  string `json:"label"`
 	Path   string `json:"path"`
 	Paused bool   `json:"paused"`
+	// Ignore lists this device's extra ignore patterns for the library,
+	// after the global and the preset's: selective sync is per device.
+	// Last matching pattern wins, so "!" re-includes what an earlier
+	// pattern excluded — but an ignored directory is not scanned into,
+	// so a re-include cannot rescue paths under an excluded directory.
+	Ignore []string `json:"ignore,omitempty"`
 	// ShareWith lists the device IDs the library syncs with. Empty means
 	// every paired device.
 	ShareWith []string `json:"shareWith,omitempty"`

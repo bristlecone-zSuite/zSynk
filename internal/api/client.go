@@ -124,6 +124,20 @@ func (c *Client) RestoreVersion(id, path, version string) (vault.Version, error)
 	return out.Restored, err
 }
 
+// SetLibraryIgnore replaces a library's ignore patterns on the daemon.
+// Selective sync is per device: these patterns apply on this device only.
+func (c *Client) SetLibraryIgnore(id string, ignore []string) (config.Library, error) {
+	var out struct {
+		Library config.Library `json:"library"`
+	}
+	err := c.do(http.MethodPost, "/v1/libraries/"+url.PathEscape(id)+"/ignore", ignoreBody{Ignore: ignore}, &out)
+	return out.Library, err
+}
+
+type ignoreBody struct {
+	Ignore []string `json:"ignore"`
+}
+
 // PauseLibrary stops syncing a library until ResumeLibrary. Its files
 // stay as they are.
 func (c *Client) PauseLibrary(id string) (config.Library, error) {

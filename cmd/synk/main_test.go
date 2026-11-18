@@ -176,6 +176,63 @@ func TestRestoreCommand(t *testing.T) {
 	}
 }
 
+// TestIgnoreCommand covers `synk ignore`: listing a library's patterns,
+// adding, removing exact matches, clearing, and the error cases.
+func TestIgnoreCommand(t *testing.T) {
+	data := t.TempDir()
+	t.Setenv("SYNK_DIR", data)
+	dir := filepath.Join(t.TempDir(), "notes")
+	tg, err := connect("Studio Mac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.node.EnableLibrary(config.Library{ID: "notes", Preset: "custom", Path: dir}); err != nil {
+		t.Fatal(err)
+	}
+	tg.close()
+
+	out, err := output(t, func() error { return cmdIgnore([]string{"--library", "notes"}) })
+	if err != nil || out != "No ignore patterns for notes.\n" {
+		t.Fatalf("empty list (%v):\n%s", err, out)
+	}
+
+	out, err = output(t, func() error {
+		return cmdIgnore([]string{"--library", "notes", "--add", " Archive/** ", "--add", "Temp/*"})
+	})
+	if err != nil || out != "Ignore patterns for notes:\n  Archive/**\n  Temp/*\n" {
+		t.Fatalf("add (%v):\n%s", err, out)
+	}
+	tg, err = connect("Studio Mac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, ok := tg.node.Library("notes")
+	if !ok || len(lib.Ignore) != 2 || lib.Ignore[0] != "Archive/**" || lib.Ignore[1] != "Temp/*" {
+		t.Fatalf("patterns not saved: %+v (%v)", lib.Ignore, ok)
+	}
+	tg.close()
+
+	out, err = output(t, func() error {
+		return cmdIgnore([]string{"--library", "notes", "--remove", "Temp/*"})
+	})
+	if err != nil || out != "Ignore patterns for notes:\n  Archive/**\n" {
+		t.Fatalf("remove (%v):\n%s", err, out)
+	}
+	out, err = output(t, func() error { return cmdIgnore([]string{"--library", "notes", "--clear"}) })
+	if err != nil || out != "No ignore patterns for notes.\n" {
+		t.Fatalf("clear (%v):\n%s", err, out)
+	}
+	if _, err := output(t, func() error { return cmdIgnore([]string{"--library", "other"}) }); err == nil {
+		t.Fatal("ignore of an unknown library succeeded")
+	}
+	if _, err := output(t, func() error { return cmdIgnore([]string{}) }); err == nil || !strings.Contains(err.Error(), "--library is required") {
+		t.Fatalf("ignore without --library: %v", err)
+	}
+	if _, err := output(t, func() error { return cmdIgnore([]string{"--library", "notes", "--add", "--clear"}) }); err == nil {
+		t.Fatal("--add together with --clear succeeded")
+	}
+}
+
 // TestRelayCommand covers `synk relay`: setting a ws or wss URL, printing
 // the current one, clearing it, and rejecting everything else.
 func TestRelayCommand(t *testing.T) {
