@@ -2,7 +2,7 @@
 
 - **Current phase:** Phase 6 (see [ROADMAP.md](ROADMAP.md)): the relay is done through the user-facing config surface; selective sync landed; vault-at-rest encryption landed — Phase 6's last line.
 - **Last done:** vault-at-rest encryption (decision 0016): the vault and the blob store seal under a passphrase — AES-256-GCM envelopes (1 MiB chunks, per-file random base, nonce from `SHA-256(base || index)`), Argon2id key, a `keycheck.json` that verifies the passphrase before reads; sealed and plain files coexist so a crash mid-migration leaves a readable mixed store; quarantined names are labeled in an encrypted vault; `synk encrypt [--off] [--passphrase PASS]`, `POST /v1/config/encryption/enable|disable`, `SYNK_VAULT_PASSPHRASE` for daemons, `vaultEncrypted` in the status; regression tests at the cipher, vault, blob, engine, API and CLI layers. Also: the BGTaskScheduler plist keys moved into project.yml, where xcodegen can't drop them.
-- **Next step:** CI on this push; then the honest Phase 5 device-verification close-out.
+- **Next step:** CI is green on Go (all three new commits pass `go test` + race + vet + staticcheck + govulncheck). The iOS test runner fails at step 9 (Run the iOS tests on the simulator) — the BackgroundSyncTests are RED, a known issue from Phase 5 that needs the honest device-verification close-out.
 - **Blocked on:** nothing (a Developer ID signing identity and notarization stay maintainer steps; recorded in STATUS.md below).
 
 ## Needs the Maintainer
