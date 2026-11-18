@@ -82,6 +82,42 @@ Here `role` is `join` or `accept`, and `code` is upper case with dashes and spac
 
 Because the proofs cover the TLS binding, a device in the middle can't relay or replay them: it would hold two different TLS sessions. Without `fp`, when the code and token are typed instead of scanned, that keeps out a device in the middle as long as the token stays secret.
 
+## Relay
+
+Two devices that cannot reach each other directly can meet through a
+relay. The relay is a dumb splice: it forwards opaque binary frames
+between exactly two connections and never reads a byte of payload.
+Everything above — the TLS 1.3 handshake, the certificate pinning, the
+framing — runs end to end between the peers as if they were directly
+connected; the relay only carries the bytes.
+
+The relay speaks a small WebSocket dialect. A peer dials
+`ws://…/v1/rooms/<room>` (or `wss://`) and upgrades. Binary frames
+carry the bytes in each direction, at most 1 MiB plus 64 KiB of
+headroom per frame. A text frame, a frame over the size cap, or a
+protocol violation ends the room with close code 1003, 1009, or 1002.
+A room holds its first peer for the relay's wait period until the
+second arrives, then closes with 1001 if it doesn't, and a peer that
+arrives after the room ended is refused with 1001. When one peer
+leaves, the relay ends the room and closes the other side with the
+leaving peer's close code, or 1000.
+
+The room name is 64 lowercase hex digits, derived by both peers from
+information they already hold (decision 0012):
+
+```
+secret = hex(SHA-256(min(kA,kB) || 0x00 || max(kA,kB)))
+room   = hex(SHA-256("synk/2 relay" || 0x00 || min(iA,iB) || 0x00
+                                  || max(iA,iB) || 0x00 || secret))
+```
+
+`kA` and `kB` are the peers' raw 32-byte public keys and `iA` and `iB`
+their printable device IDs, in each case ordered by bytes.
+
+The room name is a rendezvous label, not an authentication factor:
+knowing it lets someone occupy a slot in the room, and the pinned TLS
+handshake still decides who the peers are.
+
 ## Sync sessions
 
 A session syncs one library. In the steps below, D is the device that dials, and A is the device that answers.
