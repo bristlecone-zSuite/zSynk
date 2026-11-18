@@ -112,6 +112,15 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         NSLocalNetworkUsageDescription: "Synk syncs your documents directly with your Mac over your local network."
         NSCameraUsageDescription: "Synk uses the camera to read the pairing QR code your Mac shows."
+        # BGTaskScheduler refuses to register a task its Info.plist does not
+        # permit, so the identifiers Background.swift registers must be
+        # declared here, where xcodegen writes them into the plist.
+        UIBackgroundModes:
+          - fetch
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.zyniker.synk.refresh
+          - com.zyniker.synk.processing
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.zyniker.synk
